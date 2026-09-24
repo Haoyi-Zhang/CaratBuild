@@ -1,0 +1,11 @@
+{
+  "errors": [],
+  "file_count": 119,
+  "parsed_results": {
+    "csv": 30,
+    "json": 15
+  },
+  "schema_version": 1,
+  "status": "PASS",
+  "warnings": []
+}
