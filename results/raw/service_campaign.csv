@@ -1,0 +1,13 @@
+fixture,fault_profile,expected_facts,rounds,converged_nodes,determined_nodes,checker_accepted_nodes,gross_mass,pull_attempts,successful_pulls,failed_pulls,stopped_endpoint_attempts,received_fact_occurrences,new_fact_insertions,application_frame_bytes,maximum_frame_bytes,maximum_page_facts,request_drops,response_drops,partial_responses,delayed_responses,logical_restarts,elapsed_ms
+mixed,clean,46,3,5,5,5,31,60,60,0,0,870,184,305792,20744,16,0,0,0,0,0,179.758
+mixed,finite-network,46,7,5,5,5,31,92,89,3,0,1232,184,328185,6183,16,1,1,1,1,0,285.631
+mixed,durable-restart,46,7,5,5,5,31,140,116,24,24,1697,184,426366,12009,16,0,0,0,0,1,267.721
+permanent-holes,clean,77,5,5,5,5,77,100,100,0,0,1432,237,254968,1847,16,0,0,0,0,0,278.108
+permanent-holes,finite-network,77,6,5,5,5,77,72,69,3,0,999,237,192459,1847,16,1,1,1,1,0,260.38
+permanent-holes,durable-restart,77,6,5,5,5,77,120,96,24,24,1479,237,253744,1847,16,0,0,0,0,1,234.421
+split-coordinate,clean,2,1,5,0,0,5,20,20,0,0,21,8,14011,752,2,0,0,0,0,0,24.125
+split-coordinate,finite-network,2,6,5,0,0,5,72,69,3,0,93,8,36903,752,2,1,1,1,1,0,60.527
+split-coordinate,durable-restart,2,6,5,0,0,5,120,96,24,24,179,8,55216,752,2,0,0,0,0,1,94.719
+unresolved-effect,clean,46,3,5,0,0,31,60,60,0,0,870,184,313226,21143,16,0,0,0,0,0,243.791
+unresolved-effect,finite-network,46,7,5,0,0,31,92,89,3,0,1232,184,332382,6240,16,1,1,1,1,0,247.833
+unresolved-effect,durable-restart,46,7,5,0,0,31,140,116,24,24,1697,184,430967,12066,16,0,0,0,0,1,314.027

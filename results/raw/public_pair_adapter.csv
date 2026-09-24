@@ -1,0 +1,7 @@
+case,expected_admitted,observed_admitted
+declared-backport,True,True
+coordinate-shift,True,True
+changed-text,False,False
+changed-path,False,False
+truncated-hunk,False,False
+binary-input,False,False

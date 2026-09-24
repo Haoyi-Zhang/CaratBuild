@@ -1,0 +1,13 @@
+{
+  "all_accounting_equal": true,
+  "largest_batches": 80,
+  "largest_facts": 3025,
+  "largest_reduction_fraction": 0.852778,
+  "measurement": {
+    "cpu_seconds": 0.695744,
+    "elapsed_seconds": 0.695859,
+    "inherited_cumulative_cpu_seconds": null,
+    "peak_worker_rss_mib": 101.297,
+    "rss_scope": "single worker high-water mark including driver; not live-state allocation"
+  }
+}
