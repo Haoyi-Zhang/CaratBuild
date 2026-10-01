@@ -7,6 +7,7 @@ scan positions, never identities or proofs that an open stream is complete.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Callable, Iterable, Any
 
 from .facts import canonical_pair
@@ -31,6 +32,71 @@ def make_page(values: Iterable[str], offset: int, limit: int) -> dict[str, objec
     eof = offset + len(selected) >= len(ordered)
     return {"offset": offset, "next_offset": 0 if eof else offset + len(selected),
             "eof": eof, "facts": selected}
+
+
+def encoded_json_bytes(value: object) -> int:
+    return len(json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8"))
+
+
+def make_bounded_page(
+    values: Iterable[str],
+    offset: int,
+    limit: int,
+    maximum_frame_bytes: int,
+) -> dict[str, object]:
+    """Return the largest count- and byte-bounded RPC response page."""
+
+    natural(maximum_frame_bytes, "maximum_frame_bytes", 1 << 30)
+    if maximum_frame_bytes == 0:
+        raise ValueError("maximum frame bytes must be positive")
+    page = make_page(values, offset, limit)
+    while encoded_json_bytes({"ok": True, "result": page}) > maximum_frame_bytes:
+        facts = page["facts"]
+        if not isinstance(facts, list) or len(facts) <= 1:
+            raise ValueError("one legal fact cannot fit in the configured frame")
+        facts.pop()
+        page["eof"] = False
+        page["next_offset"] = offset + len(facts)
+    return page
+
+
+def split_put_batches(
+    values: Iterable[str | dict[str, Any]],
+    maximum_frame_bytes: int,
+    maximum_facts: int = MAX_PAGE_FACTS,
+) -> list[list[str]]:
+    """Partition facts by the actual encoded ``put`` request size."""
+
+    natural(maximum_frame_bytes, "maximum_frame_bytes", 1 << 30)
+    natural(maximum_facts, "maximum_facts", MAX_PAGE_FACTS)
+    if maximum_frame_bytes == 0 or maximum_facts == 0:
+        raise ValueError("put limits must be positive")
+    canonical = [canonical_pair(value)[0] for value in values]
+    batches: list[list[str]] = []
+    current: list[str] = []
+    for text in canonical:
+        candidate = current + [text]
+        if (
+            len(candidate) > maximum_facts
+            or encoded_json_bytes({"op": "put", "facts": candidate}) > maximum_frame_bytes
+        ):
+            if not current:
+                raise ValueError("one legal fact cannot fit in a put frame")
+            batches.append(current)
+            current = [text]
+            if encoded_json_bytes({"op": "put", "facts": current}) > maximum_frame_bytes:
+                raise ValueError("one legal fact cannot fit in a put frame")
+        else:
+            current = candidate
+    if current:
+        batches.append(current)
+    return batches
 
 
 @dataclass

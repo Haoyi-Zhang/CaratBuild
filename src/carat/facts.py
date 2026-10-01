@@ -12,6 +12,12 @@ _EVENT_SEQUENCE = re.compile(r"[1-9][0-9]*\Z")
 _ALLOWED_OPERATIONS = {"rebase", "cherry_pick", "squash", "fork", "revert"}
 _ALLOWED_OUTCOMES = {"pass", "fail", "skip"}
 
+# A seal is a bounded declaration, not an instruction to expand an arbitrary
+# integer interval.  The largest retained generated campaign uses 20,000 data
+# coordinates, so this leaves substantial headroom while rejecting malformed
+# billion-coordinate declarations before either checker constructs diagnostics.
+MAX_SEAL_SPAN = 300_000
+
 
 class FactError(ValueError):
     """Raised when a fact does not match the public schema."""
@@ -117,6 +123,37 @@ def _string_list(values: Iterable[str], field: str, *, nonempty: bool) -> list[s
     return sorted(result)
 
 
+def _validate_transform_contract(
+    operation: str,
+    inputs: list[str],
+    outputs: list[str],
+    fresh: list[str],
+) -> None:
+    """Enforce the finite transformation algebra used by both checkers.
+
+    ``fresh`` is retained on the wire for schema stability, but the current
+    algebra does not mint through transformations: only a ``mint`` fact may
+    create a unit.  Consequently it must be empty.  This removes the previous
+    ambiguity where a transformation could add an already-minted positive unit.
+    """
+
+    if operation not in _ALLOWED_OPERATIONS:
+        raise FactError("invalid transform operation")
+    if fresh:
+        raise FactError("transform fresh must be empty; only mint creates units")
+    if not set(inputs).isdisjoint(outputs):
+        raise FactError("transform input and output identifiers must be disjoint")
+    if operation in {"rebase", "cherry_pick", "revert"}:
+        if len(inputs) != 1 or len(outputs) != 1:
+            raise FactError(f"{operation} requires exactly one input and one output")
+    elif operation == "fork":
+        if len(inputs) != 1 or not outputs:
+            raise FactError("fork requires exactly one input and at least one output")
+    elif operation == "squash":
+        if len(inputs) < 2 or len(outputs) != 1:
+            raise FactError("squash requires at least two inputs and exactly one output")
+
+
 def transform(
     event: str,
     transform_id: str,
@@ -132,8 +169,7 @@ def transform(
     input_list = _string_list(inputs, "input", nonempty=True)
     output_list = _string_list(outputs, "output", nonempty=True)
     fresh_list = _string_list(fresh, "fresh", nonempty=False)
-    if operation not in _ALLOWED_OPERATIONS or not set(input_list).isdisjoint(output_list):
-        raise FactError("invalid transform fact")
+    _validate_transform_contract(operation, input_list, output_list, fresh_list)
 
     value = _base(event, "transform")
     value.update(
@@ -172,8 +208,11 @@ def seal(
         or type(frontier) is not int
         or previous < 0
         or frontier < previous
-        or sequence != frontier + 1
     ):
+        raise FactError("invalid seal fact")
+    if frontier - previous > MAX_SEAL_SPAN:
+        raise FactError("seal interval span exceeds bound")
+    if sequence != frontier + 1:
         raise FactError("invalid seal fact")
     value = _base(event, "seal")
     value.update(
@@ -275,8 +314,6 @@ def validate_shape(fact: Any) -> None:
         _nonempty_string(fact["transform"], "transform")
         operation = _nonempty_string(fact["operation"], "operation")
         _nonempty_string(fact["batch"], "batch")
-        if operation not in _ALLOWED_OPERATIONS:
-            raise FactError("malformed transform fact")
         for name, nonempty in (("inputs", True), ("outputs", True), ("fresh", False)):
             values = fact[name]
             if type(values) is not list or (nonempty and not values):
@@ -284,8 +321,12 @@ def validate_shape(fact: Any) -> None:
             parsed = [_nonempty_string(value, name) for value in values]
             if len(parsed) != len(set(parsed)):
                 raise FactError("duplicate transform reference")
-        if not set(fact["inputs"]).isdisjoint(fact["outputs"]):
-            raise FactError("transform input and output identifiers must be disjoint")
+        _validate_transform_contract(
+            operation,
+            list(fact["inputs"]),
+            list(fact["outputs"]),
+            list(fact["fresh"]),
+        )
         return
 
     if kind == "seal":
@@ -312,8 +353,11 @@ def validate_shape(fact: Any) -> None:
             or type(frontier) is not int
             or previous < 0
             or frontier < previous
-            or sequence != frontier + 1
         ):
+            raise FactError("malformed seal fact")
+        if frontier - previous > MAX_SEAL_SPAN:
+            raise FactError("seal interval span exceeds bound")
+        if sequence != frontier + 1:
             raise FactError("malformed seal fact")
         return
 

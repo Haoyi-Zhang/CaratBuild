@@ -18,7 +18,7 @@ from .closure import sealed_query
 from .decode import decode
 from .facts import canonical_pair
 from .independent_check import check, check_sealed
-from .paged import PageCursor, make_page, natural, MAX_PAGE_FACTS
+from .paged import PageCursor, make_bounded_page, natural, MAX_PAGE_FACTS
 from .protocol import Replica
 
 NODE_NAMES = tuple(f"n{index}" for index in range(5))
@@ -332,18 +332,12 @@ class Cluster:
         if op == "page":
             if set(request) != {"op", "offset", "limit"}:
                 raise ValueError("page requires offset and limit")
-            page = make_page(store.replica.facts, request["offset"], request["limit"])
-            # A byte cap can shorten a page without skipping its remaining facts.
-            while True:
-                try:
-                    encode({"ok": True, "result": page})
-                    break
-                except ValueError:
-                    if len(page["facts"]) <= 1:
-                        raise
-                    page["facts"] = page["facts"][:-1]
-                    page["eof"] = False
-                    page["next_offset"] = page["offset"] + len(page["facts"])
+            page = make_bounded_page(
+                store.replica.facts,
+                request["offset"],
+                request["limit"],
+                MAX_FRAME_BYTES,
+            )
             self.stats["largest_page_facts"] = max(self.stats["largest_page_facts"], len(page["facts"]))
             return page
         if op == "pull":

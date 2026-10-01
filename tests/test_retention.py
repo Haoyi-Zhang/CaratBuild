@@ -8,10 +8,11 @@ import unittest
 
 from carat.closure import sealed_query
 from carat.compaction import BatchSummary, compact_sealed_batch
-from carat.facts import effect, mint, presentation, seal, transform
+from carat.facts import canonical_text, effect, mint, parse_text, presentation, seal, transform
 from carat.multiprocess_service import IndependentNode
+from carat.paged import PageCursor, encoded_json_bytes, make_page, split_put_batches
 from carat.retention import RetentionCertificate, certify, issue_receipt, surviving_holders, validate_certificate
-from carat.service import NODE_NAMES
+from carat.service import NODE_NAMES, MAX_FACT_BYTES, MAX_FRAME_BYTES, encode
 
 
 def fixture():
@@ -128,8 +129,179 @@ class RetentionTests(unittest.TestCase):
             self.assertTrue(final["accounting"]["final"])
             self.assertTrue(final["accounting"]["projected"])
             self.assertEqual(final["accounting"]["gross_mass"], 5)
-            with self.assertRaises(ValueError):
-                recovered.dispatch({"op": "put", "facts": [facts[0]]})
+            replay = recovered.dispatch({"op": "put", "facts": [facts[0]]})
+            self.assertEqual(replay["added"], 0)
+            self.assertEqual(
+                recovered.dispatch({"op": "status"})["stats"]["idempotent_projected_replays"],
+                1,
+            )
+
+    def test_projected_adjudication_fences_visible_conflicts_and_restart(self):
+        batch, facts = fixture()
+        certificate = certify([
+            issue_receipt(facts, batch, NODE_NAMES, holder, 2)
+            for holder in NODE_NAMES[:3]
+        ])
+        conflicts = {
+            "same-batch-extra-seal": seal(
+                "n1:2", "extra-same-batch-seal", batch, "n1", 0, 1
+            ),
+            "cross-batch-reused-seal-id": seal(
+                "n1:2", "s0", "future", "n1", 1, 1
+            ),
+            "deleted-coordinate-new-unit": mint(
+                "n0:1", "new-unit-at-deleted-coordinate", 1, "n0", "future"
+            ),
+        }
+        for label, conflict in conflicts.items():
+            with self.subTest(label=label):
+                # A raw reference replica can see the conflicting fact and must
+                # revoke the old batch's finality.
+                raw = sealed_query(facts + [conflict], batch, NODE_NAMES)
+                self.assertFalse(raw.final, raw.as_dict())
+
+                # The normal projected-node admission path rejects the same
+                # visible conflict transactionally and preserves its old result.
+                with tempfile.TemporaryDirectory() as temporary:
+                    directory = Path(temporary) / "n3"
+                    node = IndependentNode("n3", directory)
+                    node.store.accept(facts)
+                    node.dispatch({"op": "project", "certificate": certificate.as_dict()})
+                    before = node.dispatch({"op": "query"})["accounting"]
+                    self.assertTrue(node.dispatch({"op": "finalize", "batch": batch})["accounting"]["final"])
+                    with self.assertRaisesRegex(ValueError, "fenced"):
+                        node.dispatch({"op": "put", "facts": [conflict]})
+                    self.assertEqual(node.dispatch({"op": "query"})["accounting"], before)
+                    recovered = IndependentNode("n3", directory)
+                    self.assertTrue(
+                        recovered.dispatch({"op": "finalize", "batch": batch})["accounting"]["final"]
+                    )
+
+                # Simulate a legacy/bypassed admission that persisted the
+                # conflict. Query and finalization must fail closed, and restart
+                # must not resurrect a cached True result.
+                with tempfile.TemporaryDirectory() as temporary:
+                    directory = Path(temporary) / "n3"
+                    node = IndependentNode("n3", directory)
+                    node.store.accept(facts)
+                    node.dispatch({"op": "project", "certificate": certificate.as_dict()})
+                    node.store.accept([conflict])
+                    self.assertFalse(node.dispatch({"op": "query"})["accounting"]["determined"])
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "conflicts with retained evidence|seal anchors disagree",
+                    ):
+                        node.dispatch({"op": "finalize", "batch": batch})
+                    with self.assertRaises(ValueError):
+                        IndependentNode("n3", directory)
+
+    def test_projected_transfer_skips_exact_replay_and_accepts_later_batch(self):
+        first, second, all_facts = two_window_fixture()
+        first_facts = [fact for fact in all_facts if fact["batch"] == first]
+        certificate = certify([
+            issue_receipt(first_facts, first, NODE_NAMES, holder, 2)
+            for holder in NODE_NAMES[:3]
+        ])
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "n3"
+            node = IndependentNode("n3", directory)
+            node.store.accept(first_facts)
+            node.dispatch({"op": "project", "certificate": certificate.as_dict()})
+
+            inventory = [canonical_text(fact) for fact in all_facts]
+            cursor = PageCursor()
+            while cursor.completed_sweeps == 0:
+                page = make_page(inventory, cursor.offset, 32)
+                cursor.accept(
+                    page,
+                    32,
+                    lambda values: node.dispatch({"op": "put", "facts": values})["added"],
+                )
+
+            first_final = node.dispatch({"op": "finalize", "batch": first})
+            second_final = node.dispatch({"op": "finalize", "batch": second})
+            self.assertTrue(first_final["accounting"]["final"])
+            self.assertTrue(second_final["accounting"]["final"], second_final)
+            self.assertGreater(
+                node.dispatch({"op": "status"})["stats"]["idempotent_projected_replays"],
+                0,
+            )
+            self.assertEqual(node.dispatch({"op": "query"})["accounting"]["gross_mass"], 10)
+
+            recovered = IndependentNode("n3", directory)
+            self.assertTrue(recovered.dispatch({"op": "finalize", "batch": first})["accounting"]["final"])
+            self.assertTrue(recovered.dispatch({"op": "finalize", "batch": second})["accounting"]["final"])
+            self.assertEqual(recovered.dispatch({"op": "query"})["accounting"]["gross_mass"], 10)
+
+    def test_wire_pages_and_export_are_byte_bounded_above_one_megabyte(self):
+        batch = "large-wire-batch"
+        facts = [
+            mint(
+                f"n0:{index + 1}",
+                f"large-unit-{index}-" + "x" * 32660,
+                1,
+                "n0",
+                batch,
+            )
+            for index in range(32)
+        ]
+        facts.append(seal("n0:33", "large-seal-n0", batch, "n0", 0, 32))
+        for name in NODE_NAMES[1:]:
+            facts.append(seal(f"{name}:1", f"large-seal-{name}", batch, name, 0, 0))
+        texts = [canonical_text(fact) for fact in facts]
+        data_texts = texts[:32]
+        self.assertLessEqual(max(len(text.encode("utf-8")) for text in texts), MAX_FACT_BYTES)
+        self.assertGreater(
+            encoded_json_bytes({"op": "put", "facts": data_texts}),
+            MAX_FRAME_BYTES,
+        )
+
+        batches = split_put_batches(texts, MAX_FRAME_BYTES, 32)
+        self.assertGreater(len(batches), 1)
+        self.assertTrue(all(len(encode({"op": "put", "facts": part})) <= MAX_FRAME_BYTES + 4 for part in batches))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "n0"
+            node = IndependentNode("n0", directory)
+            for part in batches:
+                node.dispatch({"op": "put", "facts": part})
+            self.assertTrue(node.dispatch({"op": "finalize", "batch": batch})["accounting"]["final"])
+
+            offset = 0
+            paged: list[str] = []
+            for _ in range(8):
+                page = node.dispatch({"op": "page", "offset": offset, "limit": 32})
+                self.assertLessEqual(len(encode({"ok": True, "result": page})), MAX_FRAME_BYTES + 4)
+                paged.extend(page["facts"])
+                if page["eof"]:
+                    break
+                offset = page["next_offset"]
+            self.assertEqual(set(paged), set(texts))
+
+            node.dispatch({"op": "receipt", "batch": batch, "max_crashes": 0})
+            offset = 0
+            exported: list[str] = []
+            manifest = None
+            for _ in range(8):
+                page = node.dispatch({
+                    "op": "export", "batch": batch, "offset": offset, "limit": 32,
+                })
+                self.assertLessEqual(len(encode({"ok": True, "result": page})), MAX_FRAME_BYTES + 4)
+                if manifest is None:
+                    manifest = page["manifest"]
+                else:
+                    self.assertEqual(page["manifest"], manifest)
+                exported.extend(page["facts"])
+                if page["eof"]:
+                    break
+                offset = page["next_offset"]
+            self.assertIsNotNone(manifest)
+            self.assertEqual(manifest["total_facts"], len(texts))
+            self.assertEqual(
+                manifest["total_canonical_bytes"],
+                sum(len(text.encode("utf-8")) for text in texts),
+            )
+            self.assertEqual(set(exported), set(texts))
 
     def test_receipt_log_recovers_only_an_incomplete_final_record(self):
         batch, facts = fixture()
@@ -249,7 +421,8 @@ class RetentionTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 with self.assertRaisesRegex(
-                    ValueError, "pending projection summary disagrees with raw facts"
+                    ValueError,
+                    "projection summary disagrees with exact replay index|pending projection summary disagrees with raw facts",
                 ):
                     IndependentNode("n3", directory)
 
@@ -291,11 +464,34 @@ class RetentionTests(unittest.TestCase):
             ])
             for batch in (first, second)
         }
-        tampered_second = summaries[second].as_dict()
-        tampered_second["units"][0][0] = summaries[first].units[0][0]
-        # The record remains internally well formed; only the cross-summary
-        # namespace collision exposes the corruption.
+        second_fact = mint("n4:100", summaries[first].units[0][0], 1, "n4", second)
+        second_anchors = tuple(
+            canonical_text(seal(
+                f"{name}:{102 if name == 'n4' else 2}",
+                f"independent-{name}", second, name,
+                100 if name == "n4" else 1,
+                101 if name == "n4" else 1,
+            ))
+            for name in NODE_NAMES
+        )
+        independent_second = BatchSummary(
+            batch=second,
+            units=((summaries[first].units[0][0], 1),),
+            presentation_ids=(),
+            transform_ids=(),
+            effects=(),
+            effect_ids=(),
+            replay_facts=(canonical_text(second_fact),),
+            seal_anchors=tuple(sorted(second_anchors)),
+        )
+        tampered_second = independent_second.as_dict()
         BatchSummary.from_dict(tampered_second)
+        certificates[second] = RetentionCertificate(
+            second,
+            2,
+            tuple(sorted(parse_text(text)["seal"] for text in independent_second.seal_anchors)),
+            tuple(NODE_NAMES[:3]),
+        )
 
         records = []
         for batch, summary in (
@@ -313,7 +509,7 @@ class RetentionTests(unittest.TestCase):
                 },
             })
 
-        anchors = [fact for fact in facts if fact["kind"] == "seal"]
+        anchors = list(summaries[first].seal_anchors) + list(independent_second.seal_anchors)
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary) / "n3"
             node = IndependentNode("n3", directory)

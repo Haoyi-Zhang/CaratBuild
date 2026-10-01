@@ -1,3 +1,3 @@
-# Independently preserved public patch inputs
+# Additional public patch snapshots
 
-The three unified diffs were downloaded directly from the public `pytest-dev/pytest` pull-request `.diff` endpoints during the final blind audit. `SOURCE-METADATA.json` records source URLs, byte counts, and SHA-256 digests; `PYTEST-LICENSE` preserves the upstream license. These are robustness inputs, not evidence of a representative production workload or of successful upstream builds.
+These three complete pytest pull-request diffs are retained as independent parser/provenance robustness inputs. `SOURCE-METADATA.json` records their source URLs, exact byte counts, and SHA-256 digests; `PYTEST-LICENSE` preserves the upstream MIT license and its own digest. They are not substitutes for the source/backport pair in `inputs/public/pytest/`, are not used to claim workload representativeness, and are not reported as upstream build executions.

@@ -11,7 +11,7 @@ import carat.independent_check as independent_check
 from carat.closure import sealed_query
 from carat.compaction import CompactedLedger, compact_sealed_batch
 from carat.decode import decode
-from carat.facts import FactError, canonical_text, mint, seal
+from carat.facts import MAX_SEAL_SPAN, FactError, canonical_text, mint, seal
 from carat.independent_check import check_sealed
 from carat.service import Cluster, NODE_NAMES, rpc
 
@@ -47,6 +47,30 @@ class ClosureTests(unittest.TestCase):
             seal("n0:3", "s0", "b", "n0", 0, 1)
         with self.assertRaises(FactError):
             seal("n0:1", "s0", "b", "n0", 2, 1)
+
+    def test_seal_span_and_missing_diagnostics_are_bounded(self) -> None:
+        with self.assertRaisesRegex(FactError, "span exceeds"):
+            seal(
+                f"n0:{MAX_SEAL_SPAN + 2}",
+                "too-wide",
+                "b",
+                "n0",
+                0,
+                MAX_SEAL_SPAN + 1,
+            )
+
+        bounded = seal("n0:100001", "wide-but-bounded", "b", "n0", 0, 100000)
+        result = sealed_query([bounded], "b", ("n0",))
+        individual = [
+            item for item in result.violations
+            if item.startswith("missing-sealed-coordinate:n0:")
+        ]
+        summaries = [
+            item for item in result.violations
+            if item.startswith("missing-sealed-coordinate-count:n0:")
+        ]
+        self.assertEqual(len(individual), 64)
+        self.assertEqual(summaries, ["missing-sealed-coordinate-count:n0:100000"])
 
     def test_same_observed_accounting_can_be_open_or_complete(self) -> None:
         facts = closed_window()

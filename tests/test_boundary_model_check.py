@@ -1,5 +1,6 @@
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
 spec=spec_from_file_location('boundary_model_check',ROOT/'proofs'/'boundary_model_check.py')
@@ -18,3 +19,10 @@ def test_exact_membership_bound_is_stated_with_universe():
 def test_correlated_failures_defeat_count_only_rule():
     c=mod.run()['failure_family']['correlated_counterexample']
     assert len(c['same_size_unsafe_holders'])==len(c['same_size_safe_holders'])
+
+
+def load_tests(loader, tests, pattern):
+    for name, value in sorted(globals().items()):
+        if name.startswith("test_") and callable(value):
+            tests.addTest(unittest.FunctionTestCase(value, description=name))
+    return tests

@@ -10,7 +10,7 @@ Let `F` be a finite set of canonical facts. A mint fact defines a pair `(u,m)` w
 G(F) = sum m(u) over the unique mint identities in F.
 ```
 
-Presentations, transformations, effects, and seals have zero mass. A state is **ordinary-accepted** when identifiers and event coordinates are unambiguous, references resolve, each transformation satisfies its declared signed-set law, and each effect unit belongs to its named presentation.
+Presentations, transformations, effects, and seals have zero mass. For a presentation `p`, let `A(p)` be its finite unit-to-sign map. The wire field `fresh` is reserved and must be empty: only a mint creates a unit. Rebase and cherry-pick require one input and one equal output; fork requires one input and one or more equal outputs; revert requires one input and one sign-negated output; squash requires at least two inputs and one output equal to their sign-consistent union. A state is **ordinary-accepted** when identifiers and event coordinates are unambiguous, references resolve, each transformation satisfies this written algebra, and each effect unit belongs to its named presentation. The decoder/checker agreement is differential implementation evidence, not the definition of correctness.
 
 For a fixed origin roster `O` and batch `b`, each origin seal declares an interval `(p_o,f_o]`. The **allocated batch facts** of a faithful origin are exactly its batch facts at coordinates in that interval. A batch is **final** when the checked conditions in `SCHEMA.md` hold and the decoder and separate checker agree.
 
@@ -34,7 +34,7 @@ Give the observer the same multiset `[x,x]` in two worlds. In world D, both occu
 
 ### Lemma 2
 
-Adding, duplicating, or reordering presentation, transformation, effect, or seal facts without a fresh mint does not change `G(F)`.
+Adding, duplicating, or reordering presentation, transformation, effect, or seal facts without an additional mint does not change `G(F)`.
 
 ### Proof
 
@@ -42,7 +42,7 @@ Adding, duplicating, or reordering presentation, transformation, effect, or seal
 
 ### Corollary 2.1
 
-Under honest unique mint identities, rebase, cherry-pick, fork, squash, revert, and repeated execution cannot amplify gross mass.
+Under honest unique mint identities and the declared transform arities/set equations above, rebase, cherry-pick, fork, squash, revert, and repeated execution cannot amplify gross mass.
 
 ### Evidence and boundary
 
@@ -148,32 +148,34 @@ The implementation validates fixed origin and endpoint rosters, an in-range faul
 
 For `n=5,f=2`, five independent processes first exchange bounded pages directly. Two rounds preserve a two-group partition, one endpoint restarts before healing, and all five reach the exact 205-fact union in round three; the controller records page counters but never constructs the union. The artifact then refuses two holders, accepts three, enumerates all 16 crash sets of size at most two, kills two of the three holders, restarts the survivor, confirms its pin, and exports all 205 raw facts. This is fixed-membership crash-stop survival, not BFT, repair, or multi-host independence.
 
-## 8. Projection preservation and replay fences
+## 8. Projection preservation and post-projection adjudication
 
 ### Proposition 9
 
-For an ordinary-accepted, final, self-contained batch with no cross-barrier reference, the implemented summary preserves:
+For an ordinary-accepted, final, self-contained batch with no cross-barrier reference, the implemented projection preserves:
 
-- unique unit count;
-- gross mass;
+- the exact unit/mass map;
+- unique unit count and gross mass;
 - presentation count;
-- total effect count;
-- passing effect count;
-- failing effect count.
-
-It also preserves membership of every unit, presentation, transformation, and effect identifier for later reuse checks.
+- total, passing, and failing effect counts;
+- every presentation, transformation, effect, seal, and event identifier needed by the visible-conflict rules;
+- an exact bounded compressed index of every discarded canonical non-seal fact.
 
 ### Proof
 
-The constructor derives the exact unit/mass map and counters from the accepted raw batch, collects all four identifier sets, and retains the origin seals. After persistence, projection replaces non-seal raw facts by that summary and seal anchors. The decoder reads the preserved unit map and counters. Admission and query paths check incoming identifiers against summary membership. Therefore the six values remain equal and replay/reuse of any retained identifier class is refused. ∎
+The constructor derives the exact aggregates and identifier sets from the accepted raw batch and stores the discarded canonical facts in a lossless bounded replay index. It retains the exact origin seals as anchors. Loading a summary decodes that index, reparses every fact, recomputes all aggregates and fences, and requires equality with the stored summary and anchors. Thus a successful load reconstructs the same batch-local result. ∎
+
+### Post-projection admission
+
+The replay index distinguishes two cases that an identifier-only summary cannot. Reoffering an exact discarded fact is an idempotent no-op; reoffering a different fact at the same deleted event coordinate is a conflict and is rejected. An extra same-batch seal, a seal ID reused by a later batch, or reuse of any projected semantic identifier is also rejected. A disjoint legal later batch is admitted. Every projected query/finalize path revalidates these conditions against live facts and retained anchors, so bypassing ordinary admission and persisting a visible conflict makes query, cached finalization, and restart fail closed.
 
 ### Crash ordering
 
-Summary and certificate persistence happen before raw-log replacement. If the process stops between them and raw facts remain, recovery reconstructs the complete summary—unit/mass map, six aggregates, all four identifier namespaces, and seal anchors—and recomputes the batch-local final result from those facts. It deletes raw records only on exact equality with the persisted summary and final result. It also rejects identifier overlap between summaries or between a summary and later live facts. A malformed complete projected record fails closed. Once raw facts are gone, summary authenticity remains a stated trust assumption. A holder never enters this path because its durable pin forbids projection.
+Summary and certificate persistence happen before raw-log replacement. If the process stops between them and raw facts remain, recovery reconstructs the summary, replay index, exact seals, and batch-local final result from those facts. It deletes raw records only on exact equality. Once raw facts are gone, recovery still decodes and validates the replay index and rejects live overlap or anchor mismatch. A malformed complete projected record fails closed. A holder never enters this path because its durable pin forbids projection.
 
 ### Boundaries
 
-The summary omits branch names, transform edges, dependency labels, and raw witness details. It is structurally trusted and not cryptographically authenticated. The result is not general distributed garbage collection or history-independent metadata. Retaining exact future non-reuse queries requires identifier membership information or an external oracle.
+The exact replay index is bounded at 32 MiB of uncompressed canonical text. It improves adjudication but reduces compression; it is not history-independent metadata. The summary does not preserve arbitrary branch-label, transform-edge, dependency-label, or witness organization. It is structurally trusted and not cryptographically authenticated. The result is not general distributed garbage collection.
 
 ## 9. Witness soundness and fixed-predicate inclusion minimality
 
@@ -190,17 +192,25 @@ The schema makes transform reference lists duplicate-free and disjoint. Unrelate
 
 All 400 injected violations are detected and all emitted witnesses are accepted by the checker. The maximum support size is three only for the five tested families.
 
-## 10. Transport and acknowledged process recovery
+## 10. Transport, export, and acknowledged process recovery
 
 ### Proposition 10 — finite complete-page convergence
 
-For a finite quiescent retained union, fair successful repeated sweeps, a surviving copy of each fact, and sufficient receiver capacity, bounded pages of complete canonical facts eventually make every connected survivor hold the union.
+For a finite quiescent retained union, fair successful repeated sweeps, a surviving copy of each fact, and sufficient receiver capacity, count- and encoded-byte-bounded pages of complete canonical facts eventually make every connected raw survivor hold the union.
 
 ### Proof sketch
 
-Every peer's finite sorted fact list is revisited because EOF resets its cursor. Facts inserted before an earlier cursor are therefore exposed on a later sweep. Successful page admissions monotonically add set elements. Under fairness, every retained fact is eventually offered and accepted. ∎
+Every peer's finite sorted fact list is revisited because EOF resets its cursor. Facts inserted before an earlier cursor are therefore exposed on a later sweep. Successful page admissions monotonically add set elements. Under fairness, every retained fact is eventually offered and accepted. Both response pages and `put` requests are split by their actual JSON encoding size, so a legal set whose 32-fact encoding exceeds 1 MiB is transferred in smaller frames rather than violating the wire contract. ∎
 
-The coordinate-gap comparator does not satisfy this claim: permanent low holes can starve later coordinates, and split occupancy at one coordinate can hide alternatives. In the five-process execution, bounded sender-to-receiver relays require three rounds after two partitioned rounds and a pre-heal restart; post-convergence inventories equal the exact oracle union.
+### Projection-aware continuation
+
+After projection, the convergence statement changes from raw set equality to the projected admission relation: exact old facts are recognized through the replay index and elided idempotently; disjoint legal later-batch facts are stored and can finalize; visible event, seal, or semantic-ID conflicts are rejected. A mixed page containing both old replays and a legal new batch therefore does not stall its cursor. The positive composition theorem covers this post-projection transfer relation, not reconstruction of the discarded raw set at every nonholder.
+
+### Bounded complete export
+
+A durably pinned raw holder exports a batch in encoded-byte-bounded pages. Every page repeats one stable manifest containing batch, total fact count, total canonical bytes, and seal IDs. The caller checks contiguous offsets, manifest stability, totals, seal set, and final sealed-batch validity before treating the export as complete. This is an integrity-checkable bounded protocol under the fixed honest model, not a cryptographic commitment.
+
+The coordinate-gap comparator does not satisfy the convergence claim: permanent low holes can starve later coordinates, and split occupancy at one coordinate can hide alternatives. In the five-process execution, bounded sender-to-receiver relays require three rounds after two partitioned rounds and a pre-heal restart; post-convergence inventories equal the exact oracle union.
 
 ### Acknowledged durability
 
@@ -210,7 +220,7 @@ The claim excludes power loss, disk corruption, remote filesystems, and adversar
 
 ## 11. Executed build bridge
 
-The retained public input is one licensed pytest fix/backport pair. The adapter produces six normalized facts and gross mass 15. A local four-task graph runs separate subprocesses for eligible tasks in three scenarios, producing seven pass, two fail, and three skip records. Effects do not alter mass. This demonstrates concrete executed effect production but not an upstream pytest build, representative build corpus, distributed scheduler, or proof that arbitrary dependency labels are causal.
+The retained public input is one licensed pytest fix/backport pair whose full upstream diffs, selected hunks, provenance metadata, and license are packaged. The adapter contract is more general but still finite: it accepts a bounded three-file explicit-backport declaration when both sides have equal path-indexed changed-line payloads. Synchronized changes to both sides, hunk coordinates/context, and bounded record metadata are therefore outside payload identity; one-sided payload/path changes, truncation, binary-style input, or malformed metadata fail closed. The packaged pair produces six normalized facts and gross mass 15. A local four-task graph runs separate subprocesses for eligible tasks in three scenarios, producing seven pass, two fail, and three skip records. Effects do not alter mass. This demonstrates concrete executed effect production but not an upstream pytest build, representative build corpus, distributed scheduler, or proof that arbitrary dependency labels are causal.
 
 ## 12. Composed result
 
@@ -220,12 +230,12 @@ Under strict normalization, faithful fixed origin membership, finite eventual de
 
 1. no mass amplification from presentation or transformation replay;
 2. an aggregate equal to the roster's declared batch allocation;
-3. eventual agreement with connected survivors receiving the retained union; and
+3. eventual agreement among raw survivors receiving the retained union and, after projection, consistent adjudication in which exact old replay is elided, a disjoint legal later batch is admitted, and visible conflict is refused; and
 4. at least one complete raw certified copy after every allowed crash set.
 
 ### Proof
 
-Combine Lemma 2, Theorems 4–6, Theorem 8, and Proposition 9. The conclusion contains no stronger trust, authentication, timing, or membership property than those premises. ∎
+Combine Lemma 2, Theorems 4–6, Theorem 8, Propositions 9–10, and the projection-aware continuation rule. Before projection, convergence is equality of the retained canonical set. At a projected nonholder it is agreement on the final summary plus the exact replay/no-op, later-batch admission, and conflict-refusal relation; the theorem does not assert that discarded raw data reappears there. The conclusion contains no stronger trust, authentication, timing, or membership property than those premises. ∎
 
 ## 13. Scope counterexamples retained as evidence
 

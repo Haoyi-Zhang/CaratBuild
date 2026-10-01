@@ -61,57 +61,26 @@ class AccountingTests(unittest.TestCase):
                 )
                 self.assertTrue(verify_witness(invalid, law_witness.as_dict())[0])
 
-        # Exercise the non-empty fresh-unit branch directly.  The second rewrite
-        # consumes the first output without re-declaring the fresh unit, so its
-        # mass must enter once rather than once per presentation.
-        fresh_facts = [
-            mint("n0:1", "u-base", 2, "n0", "fresh-batch"),
-            mint("n1:1", "u-fresh", 7, "n1", "fresh-batch"),
-            presentation(
-                "n0:2", "p-base", [("u-base", 1)], "main", 0, "fresh-batch"
-            ),
-            presentation(
-                "n1:2",
-                "p-fresh",
-                [("u-base", 1), ("u-fresh", 1)],
-                "topic",
-                1,
-                "fresh-batch",
-            ),
+        # Unit creation is exclusively a mint operation.  The retained wire
+        # field is therefore required to be empty for every transform law.
+        arities = {
+            "rebase": (["p0"], ["p1"]),
+            "cherry_pick": (["p0"], ["p1"]),
+            "fork": (["p0"], ["p1", "p2"]),
+            "squash": (["p0", "p2"], ["p1"]),
+            "revert": (["p0"], ["p1"]),
+        }
+        for operation, (inputs, outputs) in arities.items():
+            with self.subTest(nonempty_fresh=operation), self.assertRaises(FactError):
+                transform(
+                    "n0:9", f"fresh-{operation}", operation,
+                    inputs, outputs, ["u-fresh"], "fresh-batch"
+                )
+        with self.assertRaises(FactError):
             transform(
-                "n1:3",
-                "t-fresh",
-                "rebase",
-                ["p-base"],
-                ["p-fresh"],
-                ["u-fresh"],
-                "fresh-batch",
-            ),
-            presentation(
-                "n2:1",
-                "p-replayed",
-                [("u-base", 1), ("u-fresh", 1)],
-                "release",
-                2,
-                "fresh-batch",
-            ),
-            transform(
-                "n2:2",
-                "t-replayed",
-                "rebase",
-                ["p-fresh"],
-                ["p-replayed"],
-                [],
-                "fresh-batch",
-            ),
-        ]
-        fresh_result = decode(fresh_facts)
-        fresh_report = check(fresh_facts)
-        self.assertTrue(fresh_result.determined, fresh_result.witnesses)
-        self.assertTrue(fresh_report.accepted, fresh_report.violations)
-        self.assertEqual(fresh_result.gross_mass, 9)
-        self.assertEqual(fresh_result.unique_units, 2)
-        self.assertEqual(fresh_result.presentations, 3)
+                "n0:9", "degenerate-squash", "squash",
+                ["p0"], ["p1"], [], "fresh-batch"
+            )
 
         # A squash whose inputs assign opposite signs to one unit has no
         # representable sign-consistent union and must be refused.
@@ -147,18 +116,6 @@ class AccountingTests(unittest.TestCase):
         )
         self.assertTrue(verify_witness(sign_conflict, sign_witness.as_dict())[0])
 
-        reused_fresh = list(fresh_facts)
-        reused_fresh[-1] = transform(
-            "n2:2",
-            "t-replayed",
-            "rebase",
-            ["p-fresh"],
-            ["p-replayed"],
-            ["u-fresh"],
-            "fresh-batch",
-        )
-        self.assertFalse(decode(reused_fresh).determined)
-        self.assertFalse(check(reused_fresh).accepted)
 
     def test_mixed_history(self) -> None:
         scenario = mixed_history(93, 6, 7, rewrite_rounds=3)
@@ -241,10 +198,10 @@ class AccountingTests(unittest.TestCase):
         )
         self.assertEqual(canonical_text(p1), canonical_text(p2))
         t1 = transform(
-            "n0:3", "t0", "squash", ["p-z", "p-a"], ["p-out"], ["u-z", "u-a"], "b0"
+            "n0:3", "t0", "squash", ["p-z", "p-a"], ["p-out"], [], "b0"
         )
         t2 = transform(
-            "n0:3", "t0", "squash", ["p-a", "p-z"], ["p-out"], ["u-a", "u-z"], "b0"
+            "n0:3", "t0", "squash", ["p-a", "p-z"], ["p-out"], [], "b0"
         )
         self.assertEqual(canonical_text(t1), canonical_text(t2))
 
@@ -297,21 +254,12 @@ class AccountingTests(unittest.TestCase):
         self.assertTrue(verify_witness(equivocated, witness.as_dict())[0])
         self.assertTrue(any(value.startswith("transform-equivocation") for value in check(equivocated).violations))
 
-        fresh_reuse = [
-            mint("n0:1", "u0", 2, "n0", "fresh-global"),
-            mint("n1:1", "uf", 7, "n1", "fresh-global"),
-            presentation("n0:2", "p0", [("u0", 1)], "main", 0, "fresh-global"),
-            presentation("n0:3", "p2", [("u0", 1)], "main-2", 0, "fresh-global"),
-            presentation("n1:2", "p1", [("u0", 1), ("uf", 1)], "topic", 1, "fresh-global"),
-            presentation("n2:1", "p3", [("u0", 1), ("uf", 1)], "release", 1, "fresh-global"),
-            transform("n1:3", "t1", "rebase", ["p0"], ["p1"], ["uf"], "fresh-global"),
-            transform("n2:2", "t2", "rebase", ["p2"], ["p3"], ["uf"], "fresh-global"),
-        ]
-        result = decode(fresh_reuse)
-        self.assertFalse(result.determined)
-        witness = next(item for item in result.witnesses if item.code == "fresh-unit-reused")
-        self.assertTrue(verify_witness(fresh_reuse, witness.as_dict())[0])
-        self.assertTrue(any(value.startswith("fresh-unit-reused") for value in check(fresh_reuse).violations))
+        with self.assertRaises(FactError):
+            transform(
+                "n1:3", "t-fresh", "rebase",
+                ["p0"], ["p1"], ["uf"], "fresh-global"
+            )
+
 
     def test_witness_public_shape_is_enforced(self) -> None:
         scenario = mixed_history(83, 5, 919, rewrite_rounds=2)

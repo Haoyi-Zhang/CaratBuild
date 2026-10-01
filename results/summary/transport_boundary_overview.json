@@ -71,10 +71,10 @@
   "enumerated_converged": 324,
   "maximum_enumeration_rounds": 5,
   "measurement": {
-    "cpu_seconds": 0.144458,
-    "elapsed_seconds": 0.144457,
+    "cpu_seconds": 0.192404,
+    "elapsed_seconds": 0.192396,
     "inherited_cumulative_cpu_seconds": null,
-    "peak_worker_rss_mib": 96.551,
+    "peak_worker_rss_mib": 96.789,
     "rss_scope": "largest reported worker high-water mark, not concurrent aggregate RSS"
   }
 }

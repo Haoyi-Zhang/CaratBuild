@@ -1,7 +1,6 @@
 {
   "files_scanned": [
     "README.md",
-    "claim-evidence-ledger.csv",
     "claim_evidence_ledger.csv",
     "inputs/public/README.md",
     "inputs/public-patches/README.md",
@@ -9,306 +8,17 @@
     "results/README.md",
     "results/claim_evidence_audit.json"
   ],
-  "missing": [
-    {
-      "exists": false,
-      "line": 10,
-      "path": "results/summary/complete_overview.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 11,
-      "path": "results/summary/artifact_audit.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 12,
-      "path": "results/summary/complete_overview.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 13,
-      "path": "results/summary/complete_overview.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 16,
-      "path": "results/summary/complete_overview.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 17,
-      "path": "results/summary/complete_overview.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 18,
-      "path": "inputs/public/pytest/PROVENANCE.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 18,
-      "path": "inputs/public/pytest/pr-14018.diff",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 18,
-      "path": "inputs/public/pytest/pr-14074.diff",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 19,
-      "path": "results/summary/complete_overview.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 21,
-      "path": "results/reproduction_trials.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 2,
-      "path": "results/summary/completion_boundaries_boundary_overview.json",
-      "source": "claim_evidence_ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 22,
-      "path": "results/summary/scale_overview.json",
-      "source": "claim_evidence_ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 25,
-      "path": "results/summary/complete_overview.json",
-      "source": "claim_evidence_ledger.csv"
-    }
-  ],
-  "reference_count": 154,
+  "missing": [],
+  "reference_count": 130,
   "references": [
     {
       "exists": true,
-      "line": 22,
+      "line": 8,
       "path": "scripts/reproduce.sh",
       "source": "README.md"
     },
     {
       "exists": true,
-      "line": 30,
-      "path": "scripts/check_all.py",
-      "source": "README.md"
-    },
-    {
-      "exists": true,
-      "line": 37,
-      "path": "scripts/reproduce.py",
-      "source": "README.md"
-    },
-    {
-      "exists": true,
-      "line": 44,
-      "path": "scripts/extended_checks.py",
-      "source": "README.md"
-    },
-    {
-      "exists": true,
-      "line": 54,
-      "path": "proofs/claims.md",
-      "source": "README.md"
-    },
-    {
-      "exists": true,
-      "line": 2,
-      "path": "proofs/boundary_model_check.py",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 2,
-      "path": "results/boundary_model_check.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 3,
-      "path": "proofs/boundary_model_check.py",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 3,
-      "path": "results/boundary_model_check.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 4,
-      "path": "proofs/boundary_model_check.py",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 4,
-      "path": "results/boundary_model_check.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 5,
-      "path": "proofs/boundary_model_check.py",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 5,
-      "path": "results/boundary_model_check.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 6,
-      "path": "proofs/boundary_model_check.py",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 6,
-      "path": "results/boundary_model_check.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 7,
-      "path": "proofs/boundary_model_check.py",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 7,
-      "path": "results/boundary_model_check.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 8,
-      "path": "results/README.md",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 10,
-      "path": "results/summary/complete_overview.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 11,
-      "path": "results/summary/artifact_audit.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 12,
-      "path": "results/summary/complete_overview.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 13,
-      "path": "results/summary/complete_overview.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 16,
-      "path": "results/summary/complete_overview.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 17,
-      "path": "results/summary/complete_overview.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 18,
-      "path": "inputs/public/pytest/PROVENANCE.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 18,
-      "path": "inputs/public/pytest/pr-14018.diff",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 18,
-      "path": "inputs/public/pytest/pr-14074.diff",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 19,
-      "path": "results/summary/complete_overview.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 20,
-      "path": "results/raw/scale.csv",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": false,
-      "line": 21,
-      "path": "results/reproduction_trials.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 22,
-      "path": "scripts/reviewer_audit.py",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 22,
-      "path": "results/reviewer_audit.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 23,
-      "path": "scripts/dependency_audit.py",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 23,
-      "path": "results/dependency_audit.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 23,
-      "path": "results/environment.json",
-      "source": "claim-evidence-ledger.csv"
-    },
-    {
-      "exists": true,
       "line": 2,
       "path": "proofs/claims.md",
       "source": "claim_evidence_ledger.csv"
@@ -316,19 +26,13 @@
     {
       "exists": true,
       "line": 2,
-      "path": "src/carat/extended_experiments.py",
+      "path": "proofs/boundary_model_check.py",
       "source": "claim_evidence_ledger.csv"
     },
     {
       "exists": true,
       "line": 2,
-      "path": "tests/test_retention.py",
-      "source": "claim_evidence_ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 2,
-      "path": "scripts/extended_checks.py",
+      "path": "tests/test_boundary_model_check.py",
       "source": "claim_evidence_ledger.csv"
     },
     {
@@ -338,9 +42,9 @@
       "source": "claim_evidence_ledger.csv"
     },
     {
-      "exists": false,
+      "exists": true,
       "line": 2,
-      "path": "results/summary/completion_boundaries_boundary_overview.json",
+      "path": "results/boundary_model_check.json",
       "source": "claim_evidence_ledger.csv"
     },
     {
@@ -783,6 +487,18 @@
     },
     {
       "exists": true,
+      "line": 17,
+      "path": "results/raw/multiprocess_retention_summary.json",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 18,
+      "path": "proofs/claims.md",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
       "line": 18,
       "path": "proofs/claims.md",
       "source": "claim_evidence_ledger.csv"
@@ -838,6 +554,12 @@
     {
       "exists": true,
       "line": 20,
+      "path": "src/carat/public_inputs.py",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 20,
       "path": "proofs/claims.md",
       "source": "claim_evidence_ledger.csv"
     },
@@ -845,6 +567,18 @@
       "exists": true,
       "line": 20,
       "path": "tests/test_public_pair.py",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 20,
+      "path": "tests/test_public_input_provenance.py",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 20,
+      "path": "scripts/verify_public_inputs.py",
       "source": "claim_evidence_ledger.csv"
     },
     {
@@ -892,97 +626,127 @@
     {
       "exists": true,
       "line": 22,
-      "path": "src/carat/experiments.py",
+      "path": "proofs/claims.md",
       "source": "claim_evidence_ledger.csv"
     },
     {
       "exists": true,
       "line": 22,
-      "path": "scripts/reproduce.py",
+      "path": "src/carat/paged.py",
       "source": "claim_evidence_ledger.csv"
     },
     {
       "exists": true,
       "line": 22,
-      "path": "results/raw/scale.csv",
+      "path": "src/carat/multiprocess_service.py",
       "source": "claim_evidence_ledger.csv"
     },
     {
-      "exists": false,
+      "exists": true,
       "line": 22,
-      "path": "results/summary/scale_overview.json",
+      "path": "tests/test_retention.py",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 22,
+      "path": "tests/test_boundaries.py",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 22,
+      "path": "results/raw/transport_boundaries.csv",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 22,
+      "path": "results/raw/multiprocess_retention_summary.json",
       "source": "claim_evidence_ledger.csv"
     },
     {
       "exists": true,
       "line": 23,
-      "path": "proofs/literature_calibration.md",
+      "path": "src/carat/public_inputs.py",
       "source": "claim_evidence_ledger.csv"
     },
     {
       "exists": true,
       "line": 23,
-      "path": "proofs/literature_calibration.csv",
+      "path": "scripts/verify_public_inputs.py",
       "source": "claim_evidence_ledger.csv"
     },
     {
       "exists": true,
       "line": 23,
-      "path": "proofs/literature_calibration.csv",
+      "path": "tests/test_public_input_provenance.py",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 23,
+      "path": "inputs/public/pytest/PROVENANCE.json",
       "source": "claim_evidence_ledger.csv"
     },
     {
       "exists": true,
       "line": 24,
-      "path": "scripts/audit_artifact.py",
-      "source": "claim_evidence_ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 25,
-      "path": "scripts/reproduce.sh",
-      "source": "claim_evidence_ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 25,
-      "path": "scripts/reproduce_all.py",
-      "source": "claim_evidence_ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 25,
-      "path": "scripts/collect_all.py",
-      "source": "claim_evidence_ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 25,
-      "path": "scripts/audit_artifact.py",
-      "source": "claim_evidence_ledger.csv"
-    },
-    {
-      "exists": true,
-      "line": 25,
       "path": "scripts/check_all.py",
       "source": "claim_evidence_ledger.csv"
     },
     {
       "exists": true,
-      "line": 25,
-      "path": "scripts/audit_artifact.py",
+      "line": 24,
+      "path": "tests/test_boundary_model_check.py",
       "source": "claim_evidence_ledger.csv"
     },
     {
-      "exists": false,
-      "line": 25,
-      "path": "results/summary/complete_overview.json",
+      "exists": true,
+      "line": 24,
+      "path": "tests/test_public_input_provenance.py",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 24,
+      "path": "tests/test_reviewer_audit.py",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 24,
+      "path": "results/summary/unit_tests.json",
       "source": "claim_evidence_ledger.csv"
     },
     {
       "exists": true,
       "line": 25,
-      "path": "results/summary/unit_tests.json",
+      "path": "src/carat/facts.py",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 25,
+      "path": "src/carat/closure.py",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 25,
+      "path": "src/carat/independent_check.py",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 25,
+      "path": "tests/test_closure.py",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 25,
+      "path": "results/raw/sealed_window_summary.json",
       "source": "claim_evidence_ledger.csv"
     },
     {
@@ -994,7 +758,13 @@
     {
       "exists": true,
       "line": 26,
-      "path": "results/raw/semantic_boundaries.csv",
+      "path": "tests/test_boundaries.py",
+      "source": "claim_evidence_ledger.csv"
+    },
+    {
+      "exists": true,
+      "line": 26,
+      "path": "tests/test_closure.py",
       "source": "claim_evidence_ledger.csv"
     },
     {
@@ -1023,5 +793,5 @@
     }
   ],
   "schema_version": 1,
-  "status": "FAIL"
+  "status": "PASS"
 }

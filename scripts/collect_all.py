@@ -7,7 +7,8 @@ SUMMARY=ROOT/"results/summary"
 load=lambda name: json.loads((SUMMARY/name).read_text())
 legacy=load("overview.json")
 tests=load("unit_tests.json")
-assert tests["successful"] and tests["tests_run"] == 51
+assert tests["successful"] and tests["tests_run"] == 66
+assert tests.get("module_level_tests_run", 0) >= 8
 names=("identity","transport","service_pilot","service","recovery",
        "compaction_boundaries","public_pair","semantic_boundaries",
        "sealed_windows","multiprocess_retention","completion_boundaries",
@@ -20,7 +21,7 @@ assert extended["transport"]["enumerated_converged"] == 324
 assert extended["service"]["runs"] == 12 and extended["service"]["all_exact_union"]
 assert extended["recovery"]["acknowledged_sets_preserved"]
 assert extended["compaction_boundaries"]["matched_expected_decisions"] == 8
-assert extended["public_pair"]["matched_expected_admission"] == 6
+assert extended["public_pair"]["matched_expected_admission"] == 9
 assert extended["public_pair"]["service"]["converged_nodes"] == 5
 assert extended["semantic_boundaries"]["expected_admissions"] == 4
 assert extended["sealed_windows"]["enumerated_arrival_subsets"] == 32
@@ -46,7 +47,8 @@ assert extended["multiprocess_retention"]["certified_holders"] == 3
 assert extended["multiprocess_retention"]["enumerated_crash_sets_within_bound"] == 16
 assert extended["multiprocess_retention"]["all_enumerated_sets_have_raw_survivor"]
 assert extended["multiprocess_retention"]["under_threshold_refused"]
-assert extended["multiprocess_retention"]["closed_raw_replay_refused"]
+assert extended["multiprocess_retention"]["closed_raw_replay_idempotent"]
+assert extended["multiprocess_retention"]["closed_raw_conflict_refused"]
 assert extended["multiprocess_retention"]["surviving_holder_restart_preserved_pin"]
 assert extended["completion_boundaries"]["identity_indistinguishability_worlds"] == 2
 assert extended["completion_boundaries"]["payload_observations_identical"]

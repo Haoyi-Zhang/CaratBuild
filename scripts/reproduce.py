@@ -101,7 +101,7 @@ def validate_semantics(result: dict[str, object]) -> None:
         or compaction.get("largest_facts") != 3025
         or compaction.get("all_accounting_equal") is not True
         or not isinstance(reduction, (int, float))
-        or not _close(float(reduction), 0.852778)
+        or not _close(float(reduction), 0.692665)
     ):
         failures.append("compaction campaign semantics")
 

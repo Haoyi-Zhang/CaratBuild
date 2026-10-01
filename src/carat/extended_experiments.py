@@ -33,9 +33,9 @@ from .experiments import load_profiles, _write_csv
 from .facts import canonical_text, mint, parse_text, presentation, transform, effect, seal
 from .generate import amplification_history, ambiguity_variant, masses_from_profile, mixed_history
 from .independent_check import check, check_sealed
-from .paged import make_page, PageCursor
+from .paged import make_page, PageCursor, split_put_batches
 from .protocol import Replica
-from .service import Cluster, rpc, NODE_NAMES
+from .service import Cluster, rpc, NODE_NAMES, MAX_FRAME_BYTES
 from .retention import RetentionReceipt, certify, surviving_holders
 
 PAGE_LIMIT = 16
@@ -149,8 +149,8 @@ def transport_boundaries(root: Path) -> dict[str, Any]:
 
 
 async def _put(port: int, facts: list[dict[str, Any]]) -> None:
-    for offset in range(0, len(facts), PAGE_LIMIT):
-        await rpc(port, {"op": "put", "facts": facts[offset:offset+PAGE_LIMIT]})
+    for batch in split_put_batches(facts, MAX_FRAME_BYTES, PAGE_LIMIT):
+        await rpc(port, {"op": "put", "facts": batch})
 
 
 async def _inventory(port: int) -> set[str]:
@@ -823,11 +823,14 @@ async def _forward_remote_pages(sender_port: int, receiver_port: int) -> dict[st
         if type(facts) is not list or any(type(item) is not str for item in facts):
             raise AssertionError("independent endpoint returned a malformed page")
         if facts:
-            admitted, put_wire = await rpc(receiver_port, {"op": "put", "facts": facts})
-            if type(admitted.get("added")) is not int:
-                raise AssertionError("independent endpoint returned a malformed admission count")
-            additions += admitted["added"]
-            wire_bytes += put_wire
+            for put_batch in split_put_batches(facts, MAX_FRAME_BYTES, PAGE_LIMIT):
+                admitted, put_wire = await rpc(
+                    receiver_port, {"op": "put", "facts": put_batch}
+                )
+                if type(admitted.get("added")) is not int:
+                    raise AssertionError("independent endpoint returned a malformed admission count")
+                additions += admitted["added"]
+                wire_bytes += put_wire
         pages += 1
         occurrences += len(facts)
         maximum_page = max(maximum_page, len(facts))
@@ -845,6 +848,42 @@ async def _forward_remote_pages(sender_port: int, receiver_port: int) -> dict[st
             raise AssertionError("independent endpoint returned a non-advancing page")
         offset = next_offset
     raise AssertionError("independent endpoint page sweep exceeded its bound")
+
+
+async def _export_complete(port: int, batch: str) -> list[str]:
+    """Collect and verify one bounded immutable raw export."""
+
+    offset = 0
+    manifest: dict[str, Any] | None = None
+    values: list[str] = []
+    for _ in range(256):
+        page, _wire = await rpc(port, {
+            "op": "export", "batch": batch, "offset": offset, "limit": PAGE_LIMIT,
+        })
+        if set(page) != {"manifest", "offset", "next_offset", "eof", "facts"}:
+            raise AssertionError("raw export page has unexpected fields")
+        if page["offset"] != offset or type(page["facts"]) is not list:
+            raise AssertionError("raw export page does not match its cursor")
+        if manifest is None:
+            manifest = page["manifest"]
+        elif page["manifest"] != manifest:
+            raise AssertionError("raw export manifest changed during one export")
+        values.extend(page["facts"])
+        if page["eof"]:
+            break
+        if type(page["next_offset"]) is not int or page["next_offset"] <= offset:
+            raise AssertionError("raw export cursor did not advance")
+        offset = page["next_offset"]
+    else:
+        raise AssertionError("raw export exceeded its page bound")
+    assert manifest is not None
+    if len(values) != manifest["total_facts"]:
+        raise AssertionError("raw export fact count disagrees with its manifest")
+    if sum(len(text.encode("utf-8")) for text in values) != manifest["total_canonical_bytes"]:
+        raise AssertionError("raw export byte total disagrees with its manifest")
+    if not check_sealed(values, batch, NODE_NAMES).accepted:
+        raise AssertionError("raw export does not reconstruct the sealed batch")
+    return values
 
 
 async def multiprocess_retention(root: Path) -> dict[str, Any]:
@@ -1011,16 +1050,24 @@ async def multiprocess_retention(root: Path) -> dict[str, Any]:
                     "projection_bytes": status["projection_bytes"],
                 })
 
-            # Replays and reuse of all four identifier categories are fenced by
-            # the projected identifier summary.  This fixes the earlier unit-only
-            # boundary.
-            replay_refused = False
+            # An exact replay of verified projected raw data is idempotent so a
+            # mixed raw/projected page cannot stall its cursor.  A different fact
+            # at the deleted coordinate remains a visible conflict and is fenced.
+            replay_result, _ = await rpc(
+                ports["n3"], {"op": "put", "facts": [data[0]]}
+            )
+            replay_idempotent = replay_result.get("added") == 0
+            if not replay_idempotent:
+                raise AssertionError("exact projected raw replay was not idempotent")
+            conflicting = dict(data[0])
+            conflicting["unit"] = str(conflicting["unit"]) + "-conflict"
+            conflict_refused = False
             try:
-                await rpc(ports["n3"], {"op": "put", "facts": [data[0]]})
+                await rpc(ports["n3"], {"op": "put", "facts": [conflicting]})
             except ValueError:
-                replay_refused = True
-            if not replay_refused:
-                raise AssertionError("projected endpoint accepted a closed raw fact")
+                conflict_refused = True
+            if not conflict_refused:
+                raise AssertionError("projected endpoint accepted a conflicting deleted coordinate")
 
             # Enumerate every crash set within f for the certificate theorem.
             crash_sets = []
@@ -1052,8 +1099,8 @@ async def multiprocess_retention(root: Path) -> dict[str, Any]:
                 holder_pin_refused = True
             if not holder_pin_refused:
                 raise AssertionError("restarted raw holder lost its durable retention pin")
-            exported, _ = await rpc(ports["n2"], {"op": "export", "batch": batch})
-            if len(exported["facts"]) != len(all_facts):
+            exported = await _export_complete(ports["n2"], batch)
+            if len(exported) != len(all_facts):
                 raise AssertionError("the remaining certified holder lost raw facts")
 
             # A projected process restarts independently and reconstructs its
@@ -1110,10 +1157,11 @@ async def multiprocess_retention(root: Path) -> dict[str, Any]:
         "raw_bytes_on_projected_endpoints_before": raw_bytes,
         "bytes_on_projected_endpoints_after": projected_bytes,
         "projection_reduction_fraction": round(reduction, 6),
-        "closed_raw_replay_refused": replay_refused,
+        "closed_raw_replay_idempotent": replay_idempotent,
+        "closed_raw_conflict_refused": conflict_refused,
         "two_raw_holders_terminated": True,
         "surviving_holder_restart_preserved_pin": holder_pin_refused,
-        "surviving_holder_exported_facts": len(exported["facts"]),
+        "surviving_holder_exported_facts": len(exported),
         "projected_restart_preserved_mass": restarted["accounting"]["gross_mass"],
         "scope": "five independent localhost processes; crash-stop fixed membership; f+1 raw retention, not Byzantine attestation or multi-host performance",
     }
@@ -1161,18 +1209,44 @@ def public_pair_experiment(root: Path) -> dict[str, Any]:
     from copy import deepcopy
     from .public_pair import extract_pair, payload
     original = json.loads((root/"external_inputs/pytest_pair.json").read_text())
-    cases = [("declared-backport", original, True)]
+    cases = [("packaged-pytest-pair", original, True)]
     shifted = deepcopy(original)
-    shifted["target"][1]["hunk"] = shifted["target"][1]["hunk"].replace("-814,6 +814,12", "-7,6 +13,12")
-    cases.append(("coordinate-shift", shifted, True))
+    shifted["target"][1]["hunk"] = shifted["target"][1]["hunk"].replace(
+        "-814,6 +814,12", "-7,6 +13,12"
+    )
+    cases.append(("target-coordinate-shift", shifted, True))
+
+    synchronized = deepcopy(original)
+    for side in ("source", "target"):
+        synchronized[side][0]["hunk"] = synchronized[side][0]["hunk"].replace(
+            "Previously this resulted", "Before this change it resulted"
+        )
+    cases.append(("synchronized-two-sided-payload-change", synchronized, True))
+
+    context_metadata = deepcopy(original)
+    context_metadata["target"][1]["hunk"] = context_metadata["target"][1]["hunk"].replace(
+        "@@ -814,6 +814,12 @@ def consider_pluginarg(self, arg: str) -> None:",
+        "@@ -7,6 +13,12 @@ another context label",
+    ).replace(
+        "             if name in essential_plugins:",
+        "             # different unchanged context",
+    )
+    context_metadata["repository"] = "example/declared-repository"
+    context_metadata["source_record"] = "https://example.test/source"
+    context_metadata["target_record"] = "https://example.test/target"
+    cases.append(("context-coordinate-and-metadata-change", context_metadata, True))
+
     for name, field, value in [
-        ("changed-text", "hunk", original["target"][1]["hunk"].replace('name.endswith("conftest.py")', 'name.endswith("another.py")')),
-        ("changed-path", "path", "different.py"),
+        ("one-sided-payload-change", "hunk", original["target"][1]["hunk"].replace('name.endswith("conftest.py")', 'name.endswith("another.py")')),
+        ("one-sided-path-change", "path", "different.py"),
         ("truncated-hunk", "hunk", original["target"][1]["hunk"].splitlines(keepends=True)[0]),
         ("binary-input", "hunk", "Binary files differ\n")]:
         changed = deepcopy(original)
         changed["target"][1][field] = value
         cases.append((name, changed, False))
+    malformed_metadata = deepcopy(original)
+    malformed_metadata["access_date"] = "not-a-date"
+    cases.append(("malformed-metadata", malformed_metadata, False))
     rows = []
     for name, data, expected in cases:
         try:
@@ -1192,7 +1266,7 @@ def public_pair_experiment(root: Path) -> dict[str, Any]:
             "selected_added_lines_per_input": 15, "adapter_cases": len(rows),
             "matched_expected_admission": len(rows), "unit_mass": 15,
             "normalized_facts": len(facts), "service": service,
-            "scope": "one explicit public backport pair; static text extraction only; no upstream tests or builds executed"}
+            "scope": "generic bounded three-file declared-pair adapter evaluated on one packaged pytest fix/backport pair; no upstream tests or builds executed"}
 
 
 
@@ -1219,7 +1293,21 @@ def semantic_boundaries(root: Path) -> dict[str, Any]:
     opaque = decode(facts+[effect("n0:6", "e", "p", "u", "pass", "not-a-resolved-build-node", "b")])
     aliases = decode(facts+[mint("n1:1", "u-other", 5, "n1", "b")])
     ledger = compact_closed_batches(facts, ["b"])
-    forged = replace(ledger, summaries=(replace(ledger.summaries[0], units=(("u",50),)),))
+    original_summary = ledger.summaries[0]
+    forged_replay = tuple(
+        canonical_text({**parse_text(text), "mass": 50})
+        if parse_text(text)["kind"] == "mint" else text
+        for text in original_summary.replay_facts
+    )
+    # Internal consistency catches one-field edits.  A coherent rewrite of both
+    # the exact replay index and its aggregates remains accepted because imported
+    # projection state is not authenticated in the crash-stop model.
+    forged_summary = replace(
+        original_summary,
+        units=(("u", 50),),
+        replay_facts=forged_replay,
+    )
+    forged = replace(ledger, summaries=(forged_summary,))
     projection = forged.accounting()
     rows = [{"case":"relation-cycle", "admitted":cycle.determined, "gross_mass":cycle.gross_mass,
              "meaning":"acyclic history is not an implemented constraint"},
@@ -1228,7 +1316,7 @@ def semantic_boundaries(root: Path) -> dict[str, Any]:
             {"case":"new-mint-identity", "admitted":aliases.determined, "gross_mass":aliases.gross_mass,
              "meaning":"distinct valid mints count separately"},
             {"case":"trusted-summary-edit", "admitted":projection["determined"], "gross_mass":projection["gross_mass"],
-             "meaning":"offline summary authenticity is assumed, not checked"}]
+             "meaning":"coherently rewritten imported summary and replay index remain structurally trusted"}]
     if [r["gross_mass"] for r in rows] != [5,5,10,50] or not all(r["admitted"] for r in rows):
         raise AssertionError("semantic-boundary expectation changed")
     _write_csv(root/"results/raw/semantic_boundaries.csv", rows)

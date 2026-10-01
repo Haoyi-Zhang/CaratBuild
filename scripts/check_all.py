@@ -14,9 +14,21 @@ sys.path.insert(0, str(ROOT / "src"))
 start_cpu, start_wall = time.process_time(), time.perf_counter()
 stream = io.StringIO()
 suite = unittest.defaultTestLoader.discover(str(ROOT / "tests"))
+
+def iter_cases(value):
+    for item in value:
+        if isinstance(item, unittest.TestSuite):
+            yield from iter_cases(item)
+        else:
+            yield item
+
+cases = list(iter_cases(suite))
+module_level_tests = sum(isinstance(case, unittest.FunctionTestCase) for case in cases)
 result = unittest.TextTestRunner(stream=stream, verbosity=2).run(suite)
 record = {
-    "tests_run": result.testsRun, "failures": len(result.failures),
+    "tests_run": result.testsRun,
+    "module_level_tests_run": module_level_tests,
+    "failures": len(result.failures),
     "errors": len(result.errors), "skipped": len(result.skipped),
     "successful": result.wasSuccessful(),
     "measurement": {

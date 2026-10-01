@@ -13,6 +13,8 @@ from typing import Any, Iterable
 
 from .facts import Fact, FactError, canonical_pair, parse_text, split_event
 
+MAX_MISSING_COORDINATE_DIAGNOSTICS = 64
+
 
 @dataclass(frozen=True)
 class CheckerReport:
@@ -58,6 +60,31 @@ class SealedCheckerReport:
         }
 
 
+def _bounded_missing_coordinate_diagnostics(
+    origin: str,
+    previous: int,
+    frontier: int,
+    observed: Iterable[int],
+) -> list[str]:
+    present = sorted({value for value in observed if previous < value <= frontier})
+    missing_total = frontier - previous - len(present)
+    if missing_total <= 0:
+        return []
+    output: list[str] = []
+    cursor = previous + 1
+    for value in present + [frontier + 1]:
+        if value > cursor and len(output) < MAX_MISSING_COORDINATE_DIAGNOSTICS:
+            take = min(value - cursor, MAX_MISSING_COORDINATE_DIAGNOSTICS - len(output))
+            output.extend(
+                f"missing-sealed-coordinate:{origin}:{sequence}"
+                for sequence in range(cursor, cursor + take)
+            )
+        cursor = max(cursor, value + 1)
+    if missing_total > len(output):
+        output.append(f"missing-sealed-coordinate-count:{origin}:{missing_total}")
+    return output
+
+
 def _texts(values: Iterable[str | Fact]) -> list[str]:
     return sorted({canonical_pair(value)[0] for value in values})
 
@@ -67,35 +94,31 @@ def _atom_map(fact: Fact) -> Counter[tuple[str, int]]:
 
 
 def _expected(transform: Fact, inputs: list[Fact]) -> list[Counter[tuple[str, int]]]:
-    fresh = Counter((unit, 1) for unit in transform["fresh"])
     operation = transform["operation"]
     if operation in {"rebase", "cherry_pick"}:
         if len(inputs) != 1 or len(transform["outputs"]) != 1:
             return []
-        value = _atom_map(inputs[0])
-        value.update(fresh)
-        return [value]
+        return [_atom_map(inputs[0])]
     if operation == "fork":
         if len(inputs) != 1:
             return []
         value = _atom_map(inputs[0])
-        value.update(fresh)
         return [value.copy() for _ in transform["outputs"]]
     if operation == "squash":
-        if not inputs or len(transform["outputs"]) != 1:
+        if len(inputs) < 2 or len(transform["outputs"]) != 1:
             return []
-        value: Counter[tuple[str, int]] = Counter()
+        signs: dict[str, int] = {}
         for item in inputs:
-            for atom in _atom_map(item):
-                value[atom] = 1
-        value.update(fresh)
-        return [value]
+            for unit, sign in item["atoms"]:
+                previous = signs.get(unit)
+                if previous is not None and previous != sign:
+                    return []
+                signs[unit] = sign
+        return [Counter((unit, sign) for unit, sign in signs.items())]
     if operation == "revert":
         if len(inputs) != 1 or len(transform["outputs"]) != 1:
             return []
-        value = Counter((unit, -sign) for unit, sign in _atom_map(inputs[0]))
-        value.update(fresh)
-        return [value]
+        return [Counter((unit, -sign) for unit, sign in _atom_map(inputs[0]))]
     return []
 
 
@@ -138,15 +161,6 @@ def check(values: Iterable[str | Fact]) -> CheckerReport:
         if len(facts) != 1:
             violations.append(f"effect-equivocation:{effect_id}")
 
-    fresh_claims: dict[str, int] = defaultdict(int)
-    for facts in transforms.values():
-        for fact in facts:
-            for unit in fact["fresh"]:
-                fresh_claims[unit] += 1
-    for unit, count in fresh_claims.items():
-        if count > 1:
-            violations.append(f"fresh-unit-reused:{unit}")
-
     unique_presentations = {
         key: entries[0] for key, entries in presentations.items() if len(entries) == 1
     }
@@ -164,7 +178,6 @@ def check(values: Iterable[str | Fact]) -> CheckerReport:
             for value in transform_fact["inputs"] + transform_fact["outputs"]
             if value not in unique_presentations
         ]
-        missing.extend(value for value in transform_fact["fresh"] if value not in unique_mints)
         if missing:
             violations.append(
                 f"transform-missing-dependency:{transform_fact['transform']}:{missing[0]}"
@@ -172,12 +185,10 @@ def check(values: Iterable[str | Fact]) -> CheckerReport:
             continue
         inputs = [unique_presentations[value] for value in transform_fact["inputs"]]
         outputs = [unique_presentations[value] for value in transform_fact["outputs"]]
-        input_units = {unit for item in inputs for unit, _ in item["atoms"]}
         expected = _expected(transform_fact, inputs)
         actual = [_atom_map(item) for item in outputs]
         if (
-            any(unit in input_units for unit in transform_fact["fresh"])
-            or not expected
+            not expected
             or len(expected) != len(actual)
             or any(left != right for left, right in zip(expected, actual))
         ):
@@ -310,11 +321,19 @@ def check_sealed(
                 violations.append(f"invalid-predecessor-seal:{origin}:{cursor['previous']}")
                 break
             cursor = predecessors[0]
-        for sequence in range(previous + 1, frontier + 1):
-            covered = coordinate_entries.get((origin, sequence), [])
-            if not covered:
-                violations.append(f"missing-sealed-coordinate:{origin}:{sequence}")
-            elif len(covered) != 1:
+        observed_sequences = [
+            sequence
+            for observed_origin, sequence in coordinate_entries
+            if observed_origin == origin and previous < sequence <= frontier
+        ]
+        violations.extend(
+            _bounded_missing_coordinate_diagnostics(
+                origin, previous, frontier, observed_sequences
+            )
+        )
+        for sequence in observed_sequences:
+            covered = coordinate_entries[(origin, sequence)]
+            if len(covered) != 1:
                 violations.append(f"sealed-coordinate-equivocation:{origin}:{sequence}")
             elif covered[0].get("batch") != batch:
                 violations.append(f"foreign-batch-coordinate:{origin}:{sequence}")
@@ -333,7 +352,8 @@ def check_sealed(
         item.startswith((
             "event-equivocation:", "seal-equivocation:", "unexpected-seal-origin:",
             "unexpected-data-origin:", "missing-seal:", "multiple-seals:",
-            "missing-sealed-coordinate:", "sealed-coordinate-equivocation:",
+            "missing-sealed-coordinate:", "missing-sealed-coordinate-count:",
+            "sealed-coordinate-equivocation:",
             "foreign-batch-coordinate:", "fact-outside-sealed-interval:",
             "missing-predecessor-seal:", "invalid-predecessor-seal:",
             "global-mint-reuse:", "global-presentation-reuse:",
@@ -394,13 +414,6 @@ def _predicate(code: str, selected: list[Fact], missing: list[str]) -> bool:
             and selected[0]["transform"] == selected[1]["transform"]
             and selected[0] != selected[1]
         )
-    if code == "fresh-unit-reused":
-        return (
-            len(selected) == 2
-            and all(item["kind"] == "transform" for item in selected)
-            and selected[0] != selected[1]
-            and bool(set(selected[0]["fresh"]) & set(selected[1]["fresh"]))
-        )
     if code == "effect-equivocation":
         return (
             len(selected) == 2
@@ -424,8 +437,6 @@ def _predicate(code: str, selected: list[Fact], missing: list[str]) -> bool:
         if label.startswith("presentation:"):
             value = label.split(":", 1)[1]
             return value in transform_fact["inputs"] + transform_fact["outputs"]
-        if label.startswith("mint:"):
-            return label.split(":", 1)[1] in transform_fact["fresh"]
         return False
     if code == "effect-missing-presentation":
         return (
@@ -463,12 +474,10 @@ def _predicate(code: str, selected: list[Fact], missing: list[str]) -> bool:
             return False
         inputs = [presentation_facts[value] for value in transform_fact["inputs"]]
         outputs = [presentation_facts[value] for value in transform_fact["outputs"]]
-        input_units = {unit for item in inputs for unit, _ in item["atoms"]}
         expected = _expected(transform_fact, inputs)
         actual = [_atom_map(item) for item in outputs]
         return (
-            any(unit in input_units for unit in transform_fact["fresh"])
-            or not expected
+            not expected
             or len(expected) != len(actual)
             or any(left != right for left, right in zip(expected, actual))
         )
@@ -480,7 +489,6 @@ _CODE_CATEGORY = {
     "unit-minted-more-than-once": "conflicting-equivalence",
     "presentation-equivocation": "conflicting-equivalence",
     "transform-equivocation": "conflicting-equivalence",
-    "fresh-unit-reused": "conflicting-equivalence",
     "effect-equivocation": "conflicting-equivalence",
     "transform-law-violation": "conflicting-equivalence",
     "presentation-missing-mint": "missing-event",

@@ -1,9 +1,12 @@
-"""Narrow static extraction for one declared public backport pair.
+"""Narrow static extraction for a declared three-file backport pair.
 
 Hunk coordinates are not identities. Matching ignores only those coordinates
 and unchanged context; every changed line, including whitespace, remains exact.
-This is a text-preserving declared-pair adapter, not semantic equivalence or a
-build execution engine. Upstream snippets are read as data only.
+The adapter is format-generic within this finite contract: it does not whitelist
+pytest paths, URLs, or payload bytes.  The packaged pytest pair is one evaluated
+input whose provenance is checked separately.  This is a text-preserving
+declared-pair adapter, not semantic equivalence or a build execution engine.
+Upstream snippets are read as data only.
 """
 from __future__ import annotations
 import re
@@ -11,6 +14,27 @@ from typing import Any
 from .facts import mint, presentation, transform
 
 _HEADER = re.compile(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:[^\r\n]*)")
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
+_TOP_LEVEL = {
+    "relation", "repository", "access_date", "source_record",
+    "target_record", "source", "target",
+}
+
+
+def _metadata(corpus: dict[str, Any]) -> None:
+    if set(corpus) != _TOP_LEVEL or corpus.get("relation") != "explicit-backport":
+        raise ValueError("an explicit finite external relation is required")
+    repository = corpus["repository"]
+    access_date = corpus["access_date"]
+    source_record = corpus["source_record"]
+    target_record = corpus["target_record"]
+    if type(repository) is not str or not repository or len(repository.encode()) > 256:
+        raise ValueError("repository metadata must be a bounded non-empty string")
+    if type(access_date) is not str or _DATE.fullmatch(access_date) is None:
+        raise ValueError("access_date must be an ISO calendar-date string")
+    for label, value in (("source_record", source_record), ("target_record", target_record)):
+        if type(value) is not str or not value.startswith(("https://", "http://")) or len(value.encode()) > 2048:
+            raise ValueError(f"{label} must be a bounded HTTP(S) record locator")
 
 
 def payload(hunk: str) -> tuple[str, ...]:
@@ -37,8 +61,9 @@ def payload(hunk: str) -> tuple[str, ...]:
 
 
 def extract_pair(corpus: dict[str, Any]) -> list[dict[str, Any]]:
-    if type(corpus) is not dict or corpus.get("relation") != "explicit-backport":
-        raise ValueError("an explicit external relation is required")
+    if type(corpus) is not dict:
+        raise ValueError("declared pair must be an object")
+    _metadata(corpus)
     # This deliberately narrow adapter admits three selected files, not an
     # arbitrary repository or unbounded history. It never invents fresh target
     # work when exact extraction fails.

@@ -59,41 +59,39 @@ def _atom_counter(presentation: Fact) -> Counter[tuple[str, int]]:
     return Counter((unit, sign) for unit, sign in presentation["atoms"])
 
 
-def _union_atoms(presentations: list[Fact]) -> Counter[tuple[str, int]]:
-    result: Counter[tuple[str, int]] = Counter()
+def _union_atoms(presentations: list[Fact]) -> Counter[tuple[str, int]] | None:
+    signs: dict[str, int] = {}
     for item in presentations:
-        for atom in _atom_counter(item):
-            result[atom] = 1
-    return result
+        for unit, sign in item["atoms"]:
+            previous = signs.get(unit)
+            if previous is not None and previous != sign:
+                return None
+            signs[unit] = sign
+    return Counter((unit, sign) for unit, sign in signs.items())
 
 
 def _expected_transform(transform: Fact, inputs: list[Fact]) -> list[Counter[tuple[str, int]]]:
     operation = transform["operation"]
-    fresh = Counter((unit, 1) for unit in transform["fresh"])
     if operation in {"rebase", "cherry_pick"}:
         if len(inputs) != 1 or len(transform["outputs"]) != 1:
             return []
-        expected = _atom_counter(inputs[0])
-        expected.update(fresh)
-        return [expected]
+        return [_atom_counter(inputs[0])]
     if operation == "fork":
         if len(inputs) != 1:
             return []
         expected = _atom_counter(inputs[0])
-        expected.update(fresh)
         return [expected.copy() for _ in transform["outputs"]]
     if operation == "squash":
-        if len(inputs) < 1 or len(transform["outputs"]) != 1:
+        if len(inputs) < 2 or len(transform["outputs"]) != 1:
             return []
         expected = _union_atoms(inputs)
-        expected.update(fresh)
+        if expected is None:
+            return []
         return [expected]
     if operation == "revert":
         if len(inputs) != 1 or len(transform["outputs"]) != 1:
             return []
-        expected = Counter((unit, -sign) for (unit, sign) in _atom_counter(inputs[0]))
-        expected.update(fresh)
-        return [expected]
+        return [Counter((unit, -sign) for (unit, sign) in _atom_counter(inputs[0]))]
     return []
 
 
@@ -188,24 +186,6 @@ def decode(values: Iterable[str | Fact]) -> DecodeResult:
         else:
             valid_transforms.append(entries[0])
 
-    fresh_claims: dict[str, list[tuple[str, Fact]]] = defaultdict(list)
-    for entries in transforms.values():
-        for text, fact in entries:
-            for unit in fact["fresh"]:
-                fresh_claims[unit].append((text, fact))
-    for unit, entries in sorted(fresh_claims.items()):
-        unique_entries = {text: fact for text, fact in entries}
-        if len(unique_entries) > 1:
-            witnesses.append(
-                Witness(
-                    "conflicting-equivalence",
-                    "fresh-unit-reused",
-                    tuple(sorted(unique_entries)[:2]),
-                    (),
-                    f"unit {unit} is declared fresh by more than one transformation",
-                )
-            )
-
     for text, transform_fact in sorted(valid_transforms, key=lambda item: item[0]):
         missing: list[str] = []
         input_facts: list[Fact] = []
@@ -225,9 +205,6 @@ def decode(values: Iterable[str | Fact]) -> DecodeResult:
             else:
                 material.append(entry[0])
                 output_facts.append(entry[1])
-        for unit in transform_fact["fresh"]:
-            if unit not in valid_mints:
-                missing.append(f"mint:{unit}")
         if missing:
             witnesses.append(
                 Witness(
@@ -240,14 +217,12 @@ def decode(values: Iterable[str | Fact]) -> DecodeResult:
             )
             continue
 
-        input_units = {unit for item in input_facts for unit, _ in item["atoms"]}
-        invalid_fresh = any(unit in input_units for unit in transform_fact["fresh"])
         expected = _expected_transform(transform_fact, input_facts)
         actual = [_atom_counter(item) for item in output_facts]
         law_holds = bool(expected) and len(expected) == len(actual) and all(
             left == right for left, right in zip(expected, actual)
         )
-        if invalid_fresh or not law_holds:
+        if not law_holds:
             witnesses.append(
                 Witness(
                     "conflicting-equivalence",

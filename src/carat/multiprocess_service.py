@@ -12,7 +12,12 @@ from .closure import sealed_query
 from .compaction import BatchSummary, CompactedLedger, compact_sealed_batch
 from .facts import canonical_pair, parse_text
 from .independent_check import check, check_sealed
-from .paged import make_page, natural, MAX_PAGE_FACTS
+from .paged import (
+    encoded_json_bytes,
+    make_bounded_page,
+    natural,
+    MAX_PAGE_FACTS,
+)
 from .retention import RetentionCertificate, RetentionReceipt, issue_receipt, validate_certificate
 from .service import (
     FactStore,
@@ -120,6 +125,7 @@ class IndependentNode:
             "projection_operations": 0,
             "receipt_operations": 0,
             "fenced_replays": 0,
+            "idempotent_projected_replays": 0,
         }
 
     def _load_receipts(self) -> None:
@@ -209,12 +215,15 @@ class IndependentNode:
         for text in self.store.replica.facts:
             fact = parse_text(text)
             if fact["kind"] == "seal":
-                seals.setdefault(fact["batch"], []).append(fact["seal"])
+                seals.setdefault(fact["batch"], []).append(text)
         for batch, record in self.projections.items():
+            summary: BatchSummary = record["summary"]
             observed = tuple(sorted(seals.get(batch, [])))
-            expected = record["certificate"].seal_ids
-            if observed != expected:
+            if observed != summary.seal_anchors:
                 raise ValueError("projected batch seal anchors disagree with its certificate")
+            expected_ids = tuple(sorted(parse_text(text)["seal"] for text in observed))
+            if expected_ids != record["certificate"].seal_ids:
+                raise ValueError("projected batch seal identifiers disagree with its certificate")
 
     def _validate_pending_projection_sources(self) -> tuple[str, ...]:
         """Rebuild a persisted summary before completing interrupted deletion.
@@ -277,11 +286,62 @@ class IndependentNode:
             result["effect"].update(summary.effect_ids)
         return result
 
+    def _projection_indexes(self) -> tuple[set[str], dict[str, str], dict[str, str]]:
+        """Return exact replay, reserved-coordinate, and seal-ID indexes."""
+
+        replay: set[str] = set()
+        reserved_events: dict[str, str] = {}
+        seal_ids: dict[str, str] = {}
+        for record in self.projections.values():
+            summary: BatchSummary = record["summary"]
+            for text in summary.replay_facts + summary.seal_anchors:
+                fact = parse_text(text)
+                previous = reserved_events.get(fact["event"])
+                if previous is not None and previous != text:
+                    raise ValueError("projected summaries reuse an event coordinate")
+                reserved_events[fact["event"]] = text
+                if fact["kind"] == "seal":
+                    existing = seal_ids.get(fact["seal"])
+                    if existing is not None and existing != text:
+                        raise ValueError("projected summaries reuse a seal identifier")
+                    seal_ids[fact["seal"]] = text
+                else:
+                    replay.add(text)
+        return replay, reserved_events, seal_ids
+
     def _validate_admission(self, values: Iterable[str | dict[str, Any]]) -> list[str]:
+        candidates = [canonical_pair(value) for value in values]
         texts: list[str] = []
         closed = self._closed_identifiers()
-        for value in values:
-            text, fact = canonical_pair(value)
+        replay, reserved_events, projected_seal_ids = self._projection_indexes()
+        live = self.store.replica.facts
+        for text, fact in candidates:
+            if text in live:
+                continue
+            if text in replay:
+                self.stats["idempotent_projected_replays"] += 1
+                continue
+
+            expected_at_coordinate = reserved_events.get(fact["event"])
+            if expected_at_coordinate is not None and expected_at_coordinate != text:
+                self.stats["fenced_replays"] += 1
+                raise ValueError("event coordinate from a projected batch is fenced")
+
+            if fact.get("batch") in self.raw_pins:
+                self.stats["fenced_replays"] += 1
+                raise ValueError("a durably pinned raw batch is immutable")
+
+            if fact["kind"] == "seal":
+                if fact.get("batch") in self.projections:
+                    self.stats["fenced_replays"] += 1
+                    raise ValueError("additional seal for a projected batch is fenced")
+                previous = projected_seal_ids.get(fact["seal"])
+                if previous is not None and previous != text:
+                    self.stats["fenced_replays"] += 1
+                    raise ValueError("seal identifier from a projected batch is fenced")
+                texts.append(text)
+                continue
+
             if fact["kind"] != "seal":
                 if fact.get("batch") in self.projections:
                     self.stats["fenced_replays"] += 1
@@ -365,7 +425,12 @@ class IndependentNode:
         if op == "page":
             if set(request) != {"op", "offset", "limit"}:
                 raise ValueError("page requires offset and limit")
-            return make_page(self.store.replica.facts, request["offset"], request["limit"])
+            return make_bounded_page(
+                self.store.replica.facts,
+                request["offset"],
+                request["limit"],
+                MAX_FRAME_BYTES,
+            )
         if op == "query":
             if set(request) != {"op"}:
                 raise ValueError("query has no arguments")
@@ -389,6 +454,9 @@ class IndependentNode:
                 raise ValueError("finalize requires a batch")
             batch = request["batch"]
             if batch in self.projections:
+                self._validate_projection_anchors()
+                if not self._ledger().boundary_valid():
+                    raise ValueError("projected state conflicts with retained evidence")
                 record = self.projections[batch]
                 return {
                     "accounting": {
@@ -468,6 +536,9 @@ class IndependentNode:
             self.projections[certificate.batch] = record
             self._save_projections()
             self.store.replace_all(ledger.live_facts)
+            self._validate_projection_anchors()
+            if not self._ledger().boundary_valid():
+                raise ValueError("projection result conflicts with retained evidence")
             after = self.store.bytes_on_disk + self.projection_path.stat().st_size
             self.stats["projection_operations"] += 1
             return {
@@ -478,15 +549,41 @@ class IndependentNode:
                 "holders": list(certificate.holders),
             }
         if op == "export":
-            if set(request) != {"op", "batch"} or type(request["batch"]) is not str:
-                raise ValueError("export requires a batch")
+            if set(request) != {"op", "batch", "offset", "limit"} or type(request["batch"]) is not str:
+                raise ValueError("export requires batch, offset and limit")
             if request["batch"] in self.projections:
                 raise ValueError("projected endpoint has no raw batch to export")
+            if request["batch"] not in self.raw_pins:
+                raise ValueError("bounded complete export requires a durable raw pin")
             facts = [
                 text for text in sorted(self.store.replica.facts)
                 if parse_text(text).get("batch") == request["batch"]
             ]
-            return {"facts": facts}
+            offset = natural(request["offset"], "offset", 300_000)
+            limit = natural(request["limit"], "limit", MAX_PAGE_FACTS)
+            if limit == 0:
+                raise ValueError("export limit must be positive")
+            manifest = {
+                "batch": request["batch"],
+                "total_facts": len(facts),
+                "total_canonical_bytes": sum(len(text.encode("utf-8")) for text in facts),
+                "seal_ids": list(self.raw_pins[request["batch"]].seal_ids),
+            }
+            selected = facts[offset:offset + limit]
+            result = {
+                "manifest": manifest,
+                "offset": offset,
+                "next_offset": 0 if offset + len(selected) >= len(facts) else offset + len(selected),
+                "eof": offset + len(selected) >= len(facts),
+                "facts": selected,
+            }
+            while encoded_json_bytes({"ok": True, "result": result}) > MAX_FRAME_BYTES:
+                if len(result["facts"]) <= 1:
+                    raise ValueError("one export fact cannot fit in the configured frame")
+                result["facts"].pop()
+                result["eof"] = False
+                result["next_offset"] = offset + len(result["facts"])
+            return result
         if op == "status":
             if set(request) != {"op"}:
                 raise ValueError("status has no arguments")

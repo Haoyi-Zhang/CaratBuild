@@ -2,13 +2,56 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 import json
 from typing import Iterable
+import zlib
 
 from .decode import decode
 from .facts import Fact, canonical_pair, canonical_text, parse_text
 from .independent_check import check, check_sealed
+
+MAX_REPLAY_INDEX_BYTES = 32 * 1024 * 1024
+
+
+def _encode_replay_facts(values: Iterable[str]) -> tuple[int, str]:
+    texts = tuple(sorted(set(values)))
+    raw = "\n".join(texts).encode("utf-8")
+    if len(raw) > MAX_REPLAY_INDEX_BYTES:
+        raise ValueError("projection replay index exceeds bound")
+    blob = base64.b85encode(zlib.compress(raw, level=9)).decode("ascii")
+    return len(texts), blob
+
+
+def _decode_replay_facts(count: object, blob: object) -> tuple[str, ...]:
+    if type(count) is not int or count < 0 or type(blob) is not str:
+        raise ValueError("malformed projection replay index")
+    try:
+        compressed = base64.b85decode(blob.encode("ascii"))
+        inflater = zlib.decompressobj()
+        raw = inflater.decompress(compressed, MAX_REPLAY_INDEX_BYTES + 1)
+        remaining = MAX_REPLAY_INDEX_BYTES + 1 - len(raw)
+        if remaining <= 0:
+            raise ValueError("projection replay index exceeds bound")
+        raw += inflater.flush(remaining)
+    except (ValueError, zlib.error, UnicodeError) as exc:
+        raise ValueError("malformed projection replay index") from exc
+    if inflater.unconsumed_tail or len(raw) > MAX_REPLAY_INDEX_BYTES:
+        raise ValueError("projection replay index exceeds bound")
+    if not raw:
+        texts: tuple[str, ...] = ()
+    else:
+        try:
+            texts = tuple(raw.decode("utf-8").split("\n"))
+        except UnicodeError as exc:
+            raise ValueError("malformed projection replay index") from exc
+    if len(texts) != count or len(texts) != len(set(texts)) or tuple(sorted(texts)) != texts:
+        raise ValueError("projection replay index count or order mismatch")
+    for text in texts:
+        if canonical_text(parse_text(text)) != text:
+            raise ValueError("projection replay index contains noncanonical fact")
+    return texts
 
 
 @dataclass(frozen=True)
@@ -19,12 +62,15 @@ class BatchSummary:
     transform_ids: tuple[str, ...]
     effects: tuple[tuple[str, str, int], ...]
     effect_ids: tuple[str, ...]
+    replay_facts: tuple[str, ...] = ()
+    seal_anchors: tuple[str, ...] = ()
 
     @property
     def presentations(self) -> int:
         return len(self.presentation_ids)
 
     def as_dict(self) -> dict[str, object]:
+        replay_count, replay_blob = _encode_replay_facts(self.replay_facts)
         return {
             "batch": self.batch,
             "units": [list(item) for item in self.units],
@@ -32,6 +78,9 @@ class BatchSummary:
             "transform_ids": list(self.transform_ids),
             "effects": [list(item) for item in self.effects],
             "effect_ids": list(self.effect_ids),
+            "replay_count": replay_count,
+            "replay_blob": replay_blob,
+            "seal_anchors": list(self.seal_anchors),
         }
 
     @classmethod
@@ -40,7 +89,8 @@ class BatchSummary:
             raise ValueError("summary must be an object")
         required = {
             "batch", "units", "presentation_ids", "transform_ids",
-            "effects", "effect_ids",
+            "effects", "effect_ids", "replay_count", "replay_blob",
+            "seal_anchors",
         }
         if set(value) != required or type(value["batch"]) is not str:
             raise ValueError("malformed batch summary")
@@ -49,8 +99,13 @@ class BatchSummary:
         transform_raw = value["transform_ids"]
         effects_raw = value["effects"]
         effect_ids_raw = value["effect_ids"]
-        if not all(type(item) is list for item in (units_raw, presentation_raw, transform_raw, effects_raw, effect_ids_raw)):
+        seal_anchors_raw = value["seal_anchors"]
+        if not all(type(item) is list for item in (
+            units_raw, presentation_raw, transform_raw, effects_raw,
+            effect_ids_raw, seal_anchors_raw,
+        )):
             raise ValueError("malformed batch summary fields")
+        replay_facts = _decode_replay_facts(value["replay_count"], value["replay_blob"])
         units: list[tuple[str, int]] = []
         for item in units_raw:
             if type(item) is not list or len(item) != 2 or type(item[0]) is not str or type(item[1]) is not int or item[1] <= 0:
@@ -68,14 +123,71 @@ class BatchSummary:
                 raise ValueError(f"malformed summarized {label} identifiers")
         if len(units) != len({unit for unit, _mass in units}):
             raise ValueError("duplicate summarized unit")
-        return cls(
+        if any(type(item) is not str or not item for item in seal_anchors_raw):
+            raise ValueError("malformed summarized seal anchors")
+        summary = cls(
             batch=value["batch"],
             units=tuple(sorted(units)),
             presentation_ids=tuple(sorted(presentation_raw)),
             transform_ids=tuple(sorted(transform_raw)),
             effects=tuple(sorted(effects)),
             effect_ids=tuple(sorted(effect_ids_raw)),
+            replay_facts=replay_facts,
+            seal_anchors=tuple(sorted(seal_anchors_raw)),
         )
+        if not _summary_contents_valid(summary):
+            raise ValueError("projection summary disagrees with exact replay index")
+        return summary
+
+
+def _summary_contents_valid(summary: BatchSummary) -> bool:
+    """Check that aggregates and fences are exactly backed by retained evidence."""
+
+    try:
+        replay = [parse_text(text) for text in summary.replay_facts]
+        anchors = [parse_text(text) for text in summary.seal_anchors]
+    except ValueError:
+        return False
+    if any(fact["kind"] == "seal" or fact.get("batch") != summary.batch for fact in replay):
+        return False
+    if any(fact["kind"] != "seal" or fact.get("batch") != summary.batch for fact in anchors):
+        return False
+    events = [fact["event"] for fact in replay + anchors]
+    if len(events) != len(set(events)):
+        return False
+    decoded = decode(summary.replay_facts)
+    checked = check(summary.replay_facts)
+    if not decoded.determined or not checked.accepted:
+        return False
+    units = tuple(sorted(
+        (fact["unit"], int(fact["mass"]))
+        for fact in replay if fact["kind"] == "mint"
+    ))
+    presentation_ids = tuple(sorted(
+        fact["presentation"] for fact in replay if fact["kind"] == "presentation"
+    ))
+    transform_ids = tuple(sorted(
+        fact["transform"] for fact in replay if fact["kind"] == "transform"
+    ))
+    effect_ids = tuple(sorted(
+        fact["effect"] for fact in replay if fact["kind"] == "effect"
+    ))
+    counts: dict[tuple[str, str], int] = {}
+    for fact in replay:
+        if fact["kind"] == "effect":
+            key = (fact["unit"], fact["outcome"])
+            counts[key] = counts.get(key, 0) + 1
+    effects = tuple(sorted(
+        (unit, outcome, count)
+        for (unit, outcome), count in counts.items()
+    ))
+    return (
+        summary.units == units
+        and summary.presentation_ids == presentation_ids
+        and summary.transform_ids == transform_ids
+        and summary.effects == effects
+        and summary.effect_ids == effect_ids
+    )
 
 
 @dataclass(frozen=True)
@@ -93,44 +205,103 @@ class CompactedLedger:
         return len(json.dumps(self.as_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
     def boundary_valid(self) -> bool:
-        """Check namespace separation without requiring live-state completeness."""
+        """Validate projections against exact replay and retained seal evidence."""
 
-        closed = [item.batch for item in self.summaries]
+        if any(not _summary_contents_valid(item) for item in self.summaries):
+            return False
+        batches = [item.batch for item in self.summaries]
+        if len(batches) != len(set(batches)):
+            return False
+
         closed_units = [unit for item in self.summaries for unit, _ in item.units]
-        closed_presentations = [identifier for item in self.summaries for identifier in item.presentation_ids]
-        closed_transforms = [identifier for item in self.summaries for identifier in item.transform_ids]
-        closed_effects = [identifier for item in self.summaries for identifier in item.effect_ids]
-        closed_set = set(closed)
-        closed_unit_set = set(closed_units)
-        closed_presentation_set = set(closed_presentations)
-        closed_transform_set = set(closed_transforms)
-        closed_effect_set = set(closed_effects)
-        live_items = [parse_text(text) for text in self.live_facts]
-        return not (
-            len(closed) != len(closed_set)
-            or len(closed_units) != len(closed_unit_set)
-            or len(closed_presentations) != len(closed_presentation_set)
-            or len(closed_transforms) != len(closed_transform_set)
-            or len(closed_effects) != len(closed_effect_set)
-            or any(
-                item["batch"] in closed_set and item["kind"] != "seal"
-                for item in live_items
-            )
-            or any(
-                (item["kind"] == "mint" and item["unit"] in closed_unit_set)
-                or (
-                    item["kind"] == "presentation"
-                    and item["presentation"] in closed_presentation_set
-                )
-                or (
-                    item["kind"] == "transform"
-                    and item["transform"] in closed_transform_set
-                )
-                or (item["kind"] == "effect" and item["effect"] in closed_effect_set)
-                for item in live_items
-                if item["kind"] != "seal"
-            )
-        )
+        closed_presentations = [
+            identifier for item in self.summaries for identifier in item.presentation_ids
+        ]
+        closed_transforms = [
+            identifier for item in self.summaries for identifier in item.transform_ids
+        ]
+        closed_effects = [
+            identifier for item in self.summaries for identifier in item.effect_ids
+        ]
+        for identifiers in (
+            closed_units, closed_presentations, closed_transforms, closed_effects
+        ):
+            if len(identifiers) != len(set(identifiers)):
+                return False
+
+        replay_texts = {
+            text for summary in self.summaries for text in summary.replay_facts
+        }
+        if sum(len(summary.replay_facts) for summary in self.summaries) != len(replay_texts):
+            return False
+        anchor_texts = {
+            text for summary in self.summaries for text in summary.seal_anchors
+        }
+        if sum(len(summary.seal_anchors) for summary in self.summaries) != len(anchor_texts):
+            return False
+
+        replay_facts = {text: parse_text(text) for text in replay_texts}
+        anchor_facts = {text: parse_text(text) for text in anchor_texts}
+        reserved_events: dict[str, str] = {}
+        projected_seal_ids: set[str] = set()
+        for text, fact in {**replay_facts, **anchor_facts}.items():
+            previous = reserved_events.get(fact["event"])
+            if previous is not None and previous != text:
+                return False
+            reserved_events[fact["event"]] = text
+            if fact["kind"] == "seal":
+                if fact["seal"] in projected_seal_ids:
+                    return False
+                projected_seal_ids.add(fact["seal"])
+
+        closed_set = set(batches)
+        closed_identifier_sets = {
+            "mint": set(closed_units),
+            "presentation": set(closed_presentations),
+            "transform": set(closed_transforms),
+            "effect": set(closed_effects),
+        }
+        live_items: list[tuple[str, Fact]] = [
+            (text, parse_text(text)) for text in self.live_facts
+        ]
+        if len(self.live_facts) != len({text for text, _fact in live_items}):
+            return False
+
+        live_seal_ids: set[str] = set()
+        observed_anchors: dict[str, set[str]] = {batch: set() for batch in batches}
+        for text, fact in live_items:
+            expected = reserved_events.get(fact["event"])
+            if expected is not None and expected != text:
+                return False
+            if text in replay_texts:
+                return False
+            if fact["kind"] == "seal":
+                seal_id = fact["seal"]
+                if seal_id in live_seal_ids:
+                    return False
+                live_seal_ids.add(seal_id)
+                if seal_id in projected_seal_ids and text not in anchor_texts:
+                    return False
+                if fact["batch"] in closed_set:
+                    if text not in anchor_texts:
+                        return False
+                    observed_anchors[fact["batch"]].add(text)
+                continue
+            if fact["batch"] in closed_set:
+                return False
+            field = {
+                "mint": "unit",
+                "presentation": "presentation",
+                "transform": "transform",
+                "effect": "effect",
+            }[fact["kind"]]
+            if fact[field] in closed_identifier_sets[fact["kind"]]:
+                return False
+
+        for summary in self.summaries:
+            if observed_anchors[summary.batch] != set(summary.seal_anchors):
+                return False
+        return True
 
     def accounting(self) -> dict[str, int | bool]:
         live = decode(self.live_facts)
@@ -205,7 +376,6 @@ def compact_closed_batches(
                 presentation_batch[value]
                 for value in fact["inputs"] + fact["outputs"]
             ]
-            reference_batches.extend(unit_batch[value] for value in fact["fresh"])
             if any((batch in closed) != fact_is_closed for batch in reference_batches):
                 raise ValueError("transform crosses a closure barrier")
         elif fact["kind"] == "effect":
@@ -243,6 +413,16 @@ def compact_closed_batches(
                 key = (fact["unit"], fact["outcome"])
                 effect_counts[key] = effect_counts.get(key, 0) + 1
         effects = tuple(sorted((unit, outcome, count) for (unit, outcome), count in effect_counts.items()))
+        replay_facts = tuple(sorted(
+            text
+            for text, fact in zip(texts, facts)
+            if fact["batch"] == batch and fact["kind"] != "seal"
+        ))
+        seal_anchors = tuple(sorted(
+            text
+            for text, fact in zip(texts, facts)
+            if fact["batch"] == batch and fact["kind"] == "seal"
+        ))
         summaries.append(BatchSummary(
             batch=batch,
             units=units,
@@ -250,6 +430,8 @@ def compact_closed_batches(
             transform_ids=transform_ids,
             effects=effects,
             effect_ids=effect_ids,
+            replay_facts=replay_facts,
+            seal_anchors=seal_anchors,
         ))
 
     # Seal records remain as compact anchor facts.  They carry no accounting

@@ -18,6 +18,8 @@ from .decode import decode
 from .facts import Fact, canonical_pair, split_event
 from .independent_check import check
 
+MAX_MISSING_COORDINATE_DIAGNOSTICS = 64
+
 
 @dataclass(frozen=True)
 class SealedResult:
@@ -56,6 +58,40 @@ def _roster(origins: Iterable[str]) -> tuple[str, ...]:
     if len(values) != len(set(values)):
         raise ValueError("expected origins must be unique")
     return tuple(sorted(values))
+
+
+def _bounded_missing_coordinate_diagnostics(
+    origin: str,
+    previous: int,
+    frontier: int,
+    observed: Iterable[int],
+) -> list[str]:
+    """Describe a missing interval without expanding the entire frontier.
+
+    The shape validator already bounds seal span.  This helper additionally
+    bounds diagnostic material and derives gaps from observed coordinates, so a
+    malformed large frontier cannot trigger one diagnostic per integer.
+    """
+
+    present = sorted({value for value in observed if previous < value <= frontier})
+    missing_total = frontier - previous - len(present)
+    if missing_total <= 0:
+        return []
+    output: list[str] = []
+    cursor = previous + 1
+    for value in present + [frontier + 1]:
+        if value > cursor and len(output) < MAX_MISSING_COORDINATE_DIAGNOSTICS:
+            take = min(value - cursor, MAX_MISSING_COORDINATE_DIAGNOSTICS - len(output))
+            output.extend(
+                f"missing-sealed-coordinate:{origin}:{sequence}"
+                for sequence in range(cursor, cursor + take)
+            )
+        cursor = max(cursor, value + 1)
+    if missing_total > len(output):
+        output.append(
+            f"missing-sealed-coordinate-count:{origin}:{missing_total}"
+        )
+    return output
 
 
 def sealed_query(
@@ -171,11 +207,18 @@ def sealed_query(
                 break
             cursor = predecessors[0]
 
-        for sequence in range(previous + 1, frontier + 1):
-            entries_at_coordinate = data_by_origin_sequence.get((origin, sequence), [])
-            if not entries_at_coordinate:
-                violations.append(f"missing-sealed-coordinate:{origin}:{sequence}")
-                continue
+        observed_sequences = [
+            sequence
+            for observed_origin, sequence in data_by_origin_sequence
+            if observed_origin == origin and previous < sequence <= frontier
+        ]
+        violations.extend(
+            _bounded_missing_coordinate_diagnostics(
+                origin, previous, frontier, observed_sequences
+            )
+        )
+        for sequence in observed_sequences:
+            entries_at_coordinate = data_by_origin_sequence[(origin, sequence)]
             if len(entries_at_coordinate) != 1:
                 violations.append(f"sealed-coordinate-equivocation:{origin}:{sequence}")
                 continue
@@ -212,6 +255,7 @@ def sealed_query(
                 "unexpected-seal-origin:",
                 "unexpected-data-origin:",
                 "missing-sealed-coordinate:",
+                "missing-sealed-coordinate-count:",
                 "sealed-coordinate-equivocation:",
                 "foreign-batch-coordinate:",
                 "fact-outside-sealed-interval:",
