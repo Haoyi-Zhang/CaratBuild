@@ -30,6 +30,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Exercise the distributable tree, not the checkout's VCS internals.
+          mkdir "$RUNNER_TEMP/p023-science"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/p023-science"
+          cd "$RUNNER_TEMP/p023-science"
           ulimit -v 2097152
           ulimit -n 512
           ulimit -u 128
@@ -53,9 +57,9 @@ jobs:
         with:
           name: scientific-checks-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            results/
-            scientific-checks.log
-            ci-run-start.txt
-            ci-retained-results/
+            ${{ runner.temp }}/p023-science/results/
+            ${{ runner.temp }}/p023-science/scientific-checks.log
+            ${{ runner.temp }}/p023-science/ci-run-start.txt
+            ${{ runner.temp }}/p023-science/ci-retained-results/
           if-no-files-found: error
           retention-days: 14
