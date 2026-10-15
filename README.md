@@ -85,3 +85,13 @@ ten timing samples bind their original driver; this guard repair does not
 replace those observations or claim a new performance experiment.
 
 The evaluated model is a finite fixed faithful-origin roster, crash-stop endpoints, bounded local resources, and eventual delivery after the final failure. Projection retains an exact bounded replay index so old facts are idempotent, visible conflicts remain rejectable, and disjoint later batches can continue. The artifact does not claim Byzantine security, dynamic membership, WAN performance, cryptographic provenance, or production deployment.
+
+## Manuscript overview
+
+The protocol overview is drawn directly in Python as a font-embedded vector
+PDF. Its arrows show the declared data flow and complete-fact exchange,
+not measured traffic. With Python 3.9+ and Matplotlib, run from this directory:
+
+```sh
+python -B figures/draw_schematics.py --output figures
+```
